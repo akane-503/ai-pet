@@ -1,0 +1,26 @@
+{
+  "name": "ai-pet",
+  "productName": "AI 桌宠",
+  "version": "1.0.1",
+  "description": "AI 额度桌宠：DeepSeek / Codex / 中转站 / GLM 额度显示 + 模型提示器",
+  "main": "src/main/main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "node scripts/pack.js",
+    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js"
+  },
+  "dependencies": {
+    "koffi": "^3.3.2"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5"
+  },
+  "allowScripts": {
+    "koffi@3.3.2": true
+  }
+}

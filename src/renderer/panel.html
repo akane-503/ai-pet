@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<style>
+:root { --line: #203170; --text: #536ba9; --hint: #9fb0d9; }
+* { box-sizing: border-box; user-select: none; }
+html, body { margin: 0; background: transparent; font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif; font-size: 12px; color: var(--line); overflow: hidden; }
+.panel { position: absolute; left: 6px; right: 6px; top: 6px; max-height: calc(100vh - 12px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; background: rgba(255,255,255,.96); border: 2px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: 0 6px 20px rgba(0,0,0,.22); animation: pop .2s cubic-bezier(.34,1.56,.64,1); }
+@keyframes pop { from { transform: scale(.92) translateY(-4px); opacity: 0 } to { transform: none; opacity: 1 } }
+.info { display: grid; gap: 4px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--hint); }
+.why { font-size: 11px; color: var(--text); margin: -2px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.info .k { color: var(--text); white-space: nowrap; } .info .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+.info .v.err { color: #e0433f; font-weight: 500; } .info .v.stale { color: var(--hint); }
+.row { display: flex; align-items: center; gap: 8px; margin: 5px 0; white-space: nowrap; }
+.row label { width: 34px; color: var(--line); }
+.row input[type=range] { flex: 1; min-width: 0; accent-color: var(--line); }
+.row select { flex: 1; border: 1px solid var(--hint); border-radius: 6px; padding: 2px 4px; font-size: 12px; color: var(--line); background: #fff; }
+.row .val { width: 36px; text-align: right; color: var(--text); }
+input[type=checkbox] { accent-color: var(--line); }
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0; }
+.toggles label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.btns { display: flex; gap: 6px; margin-top: 8px; }
+.btns button { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 4px; padding-right: 4px; border: 1px solid var(--hint); border-radius: 6px; background: #fff; color: var(--line); font-size: 12px; padding: 4px 0; cursor: pointer; }
+.btns button:hover { background: var(--line); color: #fff; }
+.btns button.quit { color: #e0433f; flex: 0 0 auto; }
+.btns #launch-btn { flex: 1.8; }
+</style></head>
+<body><div class="panel">
+  <div id="info" class="info"></div>
+  <div id="why" class="why"></div>
+  <div class="row"><label>角色</label><select data-cfg="character"></select></div>
+  <div class="row"><label>大小</label><input type="range" min="0.5" max="2.4" step="0.05" data-cfg="scale"><span class="val" id="scale-val"></span></div>
+  <div class="row"><label>音效</label><select data-cfg="sound"><option value="off">关</option><option value="duck">小黄鸭</option><option value="fx1">音效1</option></select><input type="range" min="0" max="1" step="0.05" data-cfg="volume" style="width:60px"></div>
+  <div class="row"><label>峰谷</label><select data-cfg="peakMode"><option value="default">默认</option><option value="liang">梁文峰谷</option><option value="strong">!?强强?!</option><option value="off">关闭</option></select></div>
+  <div class="toggles">
+    <label><input type="checkbox" data-cfg="bubbleOn"> 气泡</label>
+    <label><input type="checkbox" data-cfg="quipsOn"> 台词</label>
+    <label><input type="checkbox" data-cfg="snapWindows"> 吸附窗口</label>
+    <label><input type="checkbox" data-cfg="alwaysOnTop"> 置顶</label>
+  </div>
+  <div class="btns"><button data-act="launch" id="launch-btn">🚀 打开工具</button><button data-act="refresh">刷新</button><button data-act="settings">设置</button><button data-act="quit" class="quit">退出</button></div>
+</div>
+<script src="panel.js"></script></body></html>

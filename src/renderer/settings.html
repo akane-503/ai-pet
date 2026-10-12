@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; script-src 'self'">
+<title>AI 桌宠 · 设置</title>
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<aside id="nav">
+  <div class="brand">🐳 AI 桌宠</div>
+  <a href="#providers" data-tab="providers">🔌 数据源</a>
+  <a href="#notify" data-tab="notify">🔔 通知</a>
+  <a href="#appearance" data-tab="appearance">🎭 外观</a>
+  <a href="#activity" data-tab="activity">🕵️ 活跃检测</a>
+  <a href="#launch" data-tab="launch">🚀 打开工具</a>
+  <a href="#notifications" data-tab="notifications">📨 消息中心 <span id="unread" class="pill hidden"></span></a>
+  <a href="#about" data-tab="about">ℹ️ 关于</a>
+  <div class="nav-foot"><button id="save" class="primary">保存设置</button><div id="save-msg"></div></div>
+</aside>
+<main>
+  <section id="tab-providers" class="tab">
+    <h1>数据源</h1>
+    <p class="hint">每个数据源对应一个额度来源。余额类（DeepSeek / 中转站）显示金额，窗口类（Codex / GLM / Claude 订阅）显示 5 小时 / 7 天用量。所有凭据只存在本机 <code id="userdata"></code>。</p>
+    <div class="toolbar">
+      <select id="add-type"></select><button id="add-provider">＋ 添加</button>
+      <button id="scan">🔍 扫描本机凭据</button>
+    </div>
+    <div id="scan-result" class="card hidden"></div>
+    <div id="providers"></div>
+  </section>
+  <section id="tab-notify" class="tab hidden">
+    <h1>通知</h1>
+    <div class="card">
+      <h3>通知方式</h3>
+      <label><input type="checkbox" data-n="toast"> Windows 系统通知</label>
+      <label><input type="checkbox" data-n="bubble"> 桌宠气泡</label>
+      <label><input type="checkbox" data-n="sound"> 系统通知带声音</label>
+      <label>免打扰时段 <input type="text" data-n="quietHours" placeholder="23:00-08:00" style="width:120px"></label>
+    </div>
+    <div class="card">
+      <h3>提醒内容</h3>
+      <label><input type="checkbox" data-n="resets"> ⏰ 额度窗口重置（Codex 5h/7d、GLM、Claude）</label>
+      <label><input type="checkbox" data-n="gifts"> 🎁 送额度 / 送 token / 提前重置 / 充值到账</label>
+      <label><input type="checkbox" data-n="lowBalance"> ⚠️ 余额不足 / 额度快用完</label>
+      <label><input type="checkbox" data-n="newModels"> 🆕 模型上新（对比各家 /models 列表与 Codex 模型缓存）</label>
+      <label><input type="checkbox" data-n="announcements"> 📣 中转站公告</label>
+      <label><input type="checkbox" data-n="rss"> 📰 RSS 资讯</label>
+    </div>
+    <div class="card">
+      <h3>RSS / Atom 订阅（可选）</h3>
+      <p class="hint">用来跟踪官方博客/更新日志，例如 OpenAI、Anthropic、DeepSeek 的新闻页 RSS。网络不通的源会被静默跳过。</p>
+      <div id="rss-list"></div>
+      <button id="rss-add">＋ 添加订阅</button>
+    </div>
+  </section>
+  <section id="tab-appearance" class="tab hidden">
+    <h1>外观</h1>
+    <p class="hint">气泡边框、文字和菜单跟随角色立绘配色。<button id="recover-pet">把桌宠找回当前屏幕</button></p>
+    <div class="card grid2">
+      <label>角色 <select data-a="character"></select></label>
+      <label>无活动时回落角色 <select data-a="favorite"></select></label>
+      <label>DeepSeek 皮肤 <select data-a="deepseekSkin"><option value="classic">原版胸像（小鲸鱼挂件）</option><option value="chibi">Q 版胸像（ZipZipPipe）</option></select></label>
+      <label>大小 <input type="range" min="0.5" max="2.2" step="0.05" data-a="scale"> <span id="scale-val"></span></label>
+      <label>气泡秒数 <input type="number" min="2" max="60" data-a="bubbleSeconds" style="width:70px"></label>
+      <label>“吃饱”余额（¥） <input type="number" min="1" data-a="fullAmountCNY" style="width:90px"> <span class="hint">余额/这个数决定胖瘦</span></label>
+      <label>音效 <select data-a="sound"><option value="off">关</option><option value="duck">小黄鸭</option><option value="fx1">音效1</option></select></label>
+      <label>音量 <input type="range" min="0" max="1" step="0.05" data-a="volume"></label>
+      <label>不透明度 <input type="range" min="0.25" max="1" step="0.05" data-a="opacity"></label>
+      <label>峰谷文案 <select data-a="peakMode"><option value="default">默认</option><option value="liang">梁文峰谷</option><option value="strong">!?强强?!</option><option value="off">关闭</option></select></label>
+      <label><input type="checkbox" data-a="bubbleOn"> 启用气泡</label>
+      <label><input type="checkbox" data-a="quipsOn"> 随机台词</label>
+      <label>闲置时每隔几分钟说一句 <input type="number" min="0" max="120" data-a="idleQuipMin" style="width:70px"> <span class="hint">0 = 不主动说</span></label>
+      <label><input type="checkbox" data-a="alwaysOnTop"> 始终置顶</label>
+      <label><input type="checkbox" data-a="snapScreen"> 靠近屏幕边缘时吸附</label>
+      <label><input type="checkbox" data-a="snapWindows"> 吸附到其他窗口（坐在窗口顶上、贴窗口两侧，并跟随窗口移动）</label>
+    </div>
+    <div class="card">
+      <label><input type="checkbox" id="autostart"> 开机自启</label>
+      <label>刷新间隔（秒） <input type="number" min="60" id="interval" style="width:90px"></label>
+      <label>模型/公告/RSS 检查间隔（分钟） <input type="number" min="5" id="news-interval" style="width:90px"></label>
+    </div>
+    <div class="card">
+      <h3>台词生成（DeepSeek API）</h3>
+      <p class="hint">定期让 DeepSeek 按每个角色的名梗写新台词（GPT 看额度、Claude 骂 A 社、鲸鱼娘吃白饭……），和内置台词一起随机出现。API Key 留空时用「数据源」里 DeepSeek 的 key。</p>
+      <label><input type="checkbox" data-q="enabled"> 自动生成</label>
+      <label>API Key <input type="password" data-q="apiKey" placeholder="留空 = 用 DeepSeek 数据源的 key"></label>
+      <label>接口地址 <input type="text" data-q="baseUrl"></label>
+      <label>模型 <input type="text" data-q="model" style="width:160px"> 每 <input type="number" min="1" data-q="intervalHours" style="width:60px"> 小时一次，每个角色 <input type="number" min="5" max="60" data-q="perCharacter" style="width:60px"> 句，最多保留 <input type="number" min="20" max="500" data-q="keep" style="width:60px"> 句</label>
+      <div style="display:flex;gap:8px;align-items:center"><button id="quips-gen">现在生成</button><span id="quips-msg" class="hint" style="margin:0"></span></div>
+    </div>
+    <div class="card">
+      <h3>角色立绘</h3>
+      <p class="hint">鲸鱼娘保留原版；其他角色参考原娘化形象统一为大头半身画风。可为每个角色指定本机自定义图片（PNG 透明底最佳）。</p>
+      <div id="preview" class="preview"></div>
+    </div>
+  </section>
+  <section id="tab-activity" class="tab hidden">
+    <h1>活跃检测</h1>
+    <p class="hint">“自动”角色模式下，桌宠根据各 agent 最近的会话写入时间判断你正在用谁：Codex（~/.codex/sessions）、Claude Code（.claude/projects，支持 WSL 路径）、Gemini CLI、Qwen Code。Codex 若被路由到 DeepSeek / GLM，会算作对应角色。</p>
+    <div class="card grid2">
+      <label>判定窗口（分钟） <input type="number" min="1" data-act="windowMin" style="width:80px"></label>
+      <label>Codex 目录 <input type="text" data-act="codexDir"></label>
+      <label>Claude 配置目录（留空自动：本机 + cc-switch 指向的 WSL 目录） <input type="text" data-act="claudeDir" placeholder="\\wsl.localhost\Ubuntu-24.04\home\xxx\.claude"></label>
+      <label>Gemini 目录 <input type="text" data-act="geminiDir"></label>
+      <label>Qwen 目录 <input type="text" data-act="qwenDir"></label>
+    </div>
+    <div class="card"><button id="act-test">立即检测</button><pre id="act-result"></pre></div>
+  </section>
+  <section id="tab-launch" class="tab hidden">
+    <h1>打开工具</h1>
+    <p class="hint">双击角色、右键菜单「打开 …」或快捷面板「打开工具」时，按当前角色启动对应的 agent。桌面应用已经开着就只置前不重复开；CLI 每次开一个新终端窗口；网页用默认浏览器打开。留空使用内置默认值。</p>
+    <div id="launch-list"></div>
+  </section>
+  <section id="tab-notifications" class="tab hidden">
+    <h1>消息中心</h1>
+    <div class="toolbar"><button id="n-read">全部标为已读</button><button id="n-clear">清空</button></div>
+    <div id="n-list"></div>
+  </section>
+  <section id="tab-about" class="tab hidden">
+    <h1>关于</h1>
+    <div class="card">
+      <p><b>AI 桌宠</b> — 参考「大肥鱼 / DeepSeek 余额小鲸鱼」做的桌面版，加上 Codex、中转站、GLM 等多家额度显示，以及重置/送额度/上新提醒。</p>
+      <p id="about-meta"></p>
+      <h3>操作</h3>
+      <ul>
+        <li>左键点角色：弹气泡并刷新；点气泡：切换内容；右键气泡：关闭</li>
+        <li>拖拽：移动，松手自动吸附屏幕边缘或其他窗口；贴左边时镜像翻转</li>
+        <li>右键角色 / 托盘图标：菜单；双击角色：打开对应工具；F12：开发者工具</li>
+        <li>悬停角色右上角 ⋯ 打开快捷面板</li>
+      </ul>
+      <h3>数据来源</h3>
+      <ul>
+        <li>DeepSeek：<code>api.deepseek.com/user/balance</code></li>
+        <li>Codex：<code>chatgpt.com/backend-api/wham/usage</code>（用 ~/.codex/auth.json 的登录态；失败时读本地会话日志里的 rate_limits）</li>
+        <li>中转站（new-api/one-api）：<code>/v1/dashboard/billing/*</code> 或 <code>/api/user/self</code>，公告来自 <code>/api/status</code></li>
+        <li>GLM：<code>/api/monitor/usage/quota/limit</code></li>
+        <li>Claude 订阅：<code>api.anthropic.com/api/oauth/usage</code></li>
+      </ul>
+    </div>
+  </section>
+</main>
+<script src="settings.js"></script>
+</body>
+</html>
