@@ -1,0 +1,78 @@
+# AI 桌宠（ai-pet）
+
+参考「大肥鱼 / DeepSeek 余额小鲸鱼」做的 **Windows 桌面版** 额度桌宠：
+透明置顶、可拖拽、智能吸附屏幕边缘和其他窗口（坐在窗口顶上并跟随移动），
+同时显示 DeepSeek 余额、Codex/ChatGPT 5h·7d 用量、中转站余额、GLM Coding Plan 额度、Claude 订阅用量，
+并在 **额度重置 / 送额度 / 送 token / 模型上新 / 中转站公告 / 余额不足** 时弹通知。
+角色会根据你正在用的 agent 自动切换：鲸鱼娘(DeepSeek)、白龙娘(GPT/Codex)、Claude 娘、ZCode 黑狐娘、Gemini 猫娘、千问娘、Kimi 娘、Grok 娘、经典短发豆包。鲸鱼娘保留原版，其他角色按娘化设定统一为大头半身、粗线条的透明立绘。气泡描边、文字、快捷面板和设置页使用角色立绘的配色。
+
+## 运行
+
+- 依赖：Windows 10/11，Node.js **22.12 或更新版本**。
+- 完整解压 Release 的 ai-pet-v1.0.1-source.zip，再双击 start.cmd。首次联网自动安装依赖，后续直接启动。不要在压缩包内运行，也不要只复制启动文件。
+- 首次运行打开设置。数据源与付费台词生成默认关闭；按需启用并填写自己的凭据，或主动扫描本机配置再选择填入。包里没有预置作者的账号、API Key、额度或聊天记录。
+- 配置与状态保存在 Electron 用户数据目录，可在设置页查看实际路径（通常为 %APPDATA%\AI 桌宠）。删除解压目录不会删除配置；这些文件可能含密钥，请勿转发。
+- Claude 默认使用本机 WSL 默认发行版；其他工具安装位置可在「启动」设置中修改。
+- 成功启动后，可运行 scripts/install-shortcuts.ps1 创建快捷方式，-Autostart 加开机自启。请保留解压目录。
+- npm 镜像见 .npmrc，Electron 镜像在 scripts/start.ps1 中设置；也可通过 ELECTRON_MIRROR 环境变量覆盖。下载失败可再次双击；镜像不可用时可改用 npm 官方 registry 与 Electron 官方下载。
+
+## 分享与当前发布状态
+
+仓库与 Release 均为**私有**。其他人需被邀请为协作者才能访问 GitHub 链接；直接分享轻量 ZIP 不需要访问仓库。当前素材公开再分发授权尚未核实，私有状态本身不构成授权。公开开源前需确认或替换素材，并为新增代码选择许可证。来源与第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+生成轻量包：npm run pack。dist/ 内产物含校验和与文件清单，只打包源码、素材、文档和必要脚本，不含依赖、用户配置、日志或素材抓取目录。回归测试：npm test。
+
+## 操作
+
+| 动作 | 效果 |
+|---|---|
+| 左键点角色 | 弹气泡 + 刷新；再点收起 |
+| 点气泡 | 循环：当前相关工具的额度 → DSH 峰谷 → 随机台词；台词关闭时仅循环数据页；右键气泡关闭，悬停阅读暂停自动关闭 |
+| 拖拽 | 移动；松手时离屏幕边缘 40 DIP 内吸附到边，或吸附其他窗口（顶/底/左/右，跟随窗口移动）；贴左边时转身镜像 |
+| 右键角色 / 托盘 | 菜单：刷新、角色、大小、音效、峰谷、置顶、吸附、开机自启、设置、退出 |
+| 悬停角色右侧 ≡ | 快捷面板（所有额度一览 + 常用开关） |
+| 双击角色 | 打开对应 agent（Claude 新开 WSL 终端，桌面应用已开则置前） |
+
+## 自动角色规则
+
+「角色 = 自动」时按优先级判断（每秒看窗口，每 10 秒看会话文件）：
+
+1. 前台窗口是某个 agent：桌面应用按进程识别，Claude Code 按终端标题识别（支持 WSL），网页按标签标题识别。
+2. 最近打开或聚焦工具后的 10 秒保护期（包括桌宠双击/菜单打开的）。
+3. 某家 agent 的会话文件 90 秒内有写入时，按最近会话活动跟随（Codex sessions、Claude Code projects、ZCode rollout、Gemini/Qwen）。
+4. 没有新会话活动时，保留最近 10 分钟打开/聚焦的角色。
+5. 会话目录最近活跃的 agent（判定窗口默认 15 分钟），然后回落到设置里的空闲角色。
+
+Claude Code 接的是谁看 `settings.json` 的 `ANTHROPIC_BASE_URL`：z.ai / bigmodel → Zcode 狐娘，deepseek → 鲸鱼娘，其余 → Claude 娘。快捷面板第二行会显示当前判定原因。
+
+Claude 目录留空时自动使用本机目录和 cc-switch 指定的 WSL 目录。Codex 的模型路由对窗口和会话文件统一生效，浏览器服务不受本机 CLI 配置影响。手动选择角色会暂停自动跟随。
+
+点击气泡只展示当前角色和 90 秒内有会话写入的工具额度。启动和普通余额消耗不会主动弹出。赠送、重置和上新消息排队显示，可在消息中心回看；长消息可滚动，正在阅读的内容和通知不会互相覆盖。免打扰时段只记录消息，不弹出。重置点每 15 秒检查，网络失败每分钟重试；从旧 Codex 会话估算到期时会注明“本地估算”，不会冒充接口确认。接口缺字段显示未知或获取失败，刷新失败保留最近成功值并注明来源和时间。
+
+气泡、文字、快捷面板和设置页使用角色立绘配色；通知也保留该配色。2026-10-10 统一了角色画风。快捷面板按屏幕可用高度限制，内容过多可滚动。换角色时保留贴边落点；外观设置有「把桌宠找回当前屏幕」。保存设置只提交改过的字段，配置损坏时保留原文件并尝试恢复 `.bak`。
+
+行为回归：`node --test scripts/test-behavior.js scripts/test-data.js`（工具识别、选择优先级、路由、额度重置与赠送、缺失数据、持久化恢复和启动失败）。
+
+## 台词
+
+内置台词按角色分组（`src/renderer/pet.js` 的 QUIPS），另外可以让 DeepSeek 定期写新梗：设置 → 外观 → 台词生成。首次安装默认关闭，需要手动开启，会产生 API 费用。开启后每 24 小时、每个角色 25 句、每角色最多保留 80 句，存在 `state.json` 的 quips 里；API Key 留空时复用 DeepSeek 数据源的 key。失败保留原台词，30 分钟后允许重试失败角色，成功的角色按正常周期更新。每个角色的梗点写在 `src/main/quips.js` 的 PERSONA 里，想调口味改那里。
+
+## 数据源
+
+| 类型 | 接口 | 说明 |
+|---|---|---|
+| DeepSeek | `api.deepseek.com/user/balance`、`/models` | 余额、赠送余额、今日已用（余额差值记账）、模型上新 |
+| Codex / ChatGPT | `chatgpt.com/backend-api/wham/usage` | 用 `~/.codex/auth.json` 登录态；失败时回退到本地会话日志里的 `rate_limits`；模型上新看 `models_cache.json` |
+| 中转站 new-api/one-api | `/v1/dashboard/billing/subscription`+`usage` 或 `/api/user/self` | 令牌不限额时只显示累计/今日用量，填“系统访问令牌+用户ID”可看账户余额；公告来自 `/api/status`、`/api/notice` |
+| 智谱 GLM / Z.ai | `/api/monitor/usage/quota/limit` | 5 小时 token 额度、MCP 月额度、重置倒计时 |
+| Claude 订阅 | `api.anthropic.com/api/oauth/usage` | 需要 Claude Code 登录凭据 `.credentials.json` |
+
+## 目录
+
+```
+src/main/        Electron 主进程：窗口/吸附(winsnap.js, koffi 调 user32)/托盘/调度/通知引擎/活跃检测/凭据导入
+src/main/providers/  各数据源
+src/renderer/    pet.html(桌宠，原版气泡几何) panel.html(快捷面板) settings.html(设置)
+assets/          角色胸像（见 characters/CREDITS.md）、音效、图标
+scripts/         首次启动、轻量打包、快捷方式、回归测试
+```

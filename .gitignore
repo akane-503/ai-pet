@@ -1,0 +1,14 @@
+node_modules/
+dist/
+work/
+outputs/
+*.log
+config.json*
+state.json*
+.env*
+*.png.tmp
+dbg-*.png
+debug-*.png
+scripts/crawl/
+scripts/gen/
+scripts/debug-*.js

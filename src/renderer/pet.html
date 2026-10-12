@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; media-src 'self' file:; script-src 'self'">
+<link rel="stylesheet" href="pet.css">
+</head>
+<body>
+<div id="root" class="root">
+  <div id="body" class="body">
+    <div id="img-wrap" class="img-wrap"><img id="char-img" class="img" alt="" draggable="false"></div>
+    <div id="bubble" class="bubble">
+      <svg viewBox="0 0 1026 700" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <path class="bshape" fill="#FFFFFF" stroke-width="18" stroke-linejoin="round" stroke-linecap="round" d="M 827 248 A 373 232 0 1 0 81 246 A 373 232 0 0 0 301 465 A 57 32 10 0 0 413 484 A 373 232 0 0 0 827 248 Z"/>
+        <ellipse class="b1" cx="352" cy="561" rx="37.5" ry="26" fill="#FFFFFF" stroke-width="18"/>
+        <ellipse class="b2" cx="442" cy="646" rx="24.5" ry="18" fill="#FFFFFF" stroke-width="18"/>
+      </svg>
+      <img id="gif" class="gif" alt="">
+      <div id="text" class="text"><div id="l1" class="label"></div><div id="l2" class="amount"></div><div id="l3" class="hint"></div></div>
+    </div>
+  </div>
+  <button id="menu-btn" class="menu-btn" title="菜单"><span></span><span></span><span></span></button>
+</div>
+<audio id="snd-press" preload="auto"></audio>
+<audio id="snd-release" preload="auto"></audio>
+<script src="pet.js"></script>
+</body>
+</html>
