@@ -95,6 +95,44 @@ test('launcher reports asynchronous spawn failures and constrains running detect
   const impl = mockedModule('src/main/launcher.js', { electron: { shell: { openExternal: async () => { throw new Error('fixture browser failure'); } } }, './winsnap': { findWindow: (_, exe) => { processFilter = exe; return null; } }, child_process: { execFileSync: () => '', spawn: () => { const c = new EventEmitter(); c.unref = () => {}; process.nextTick(() => c.emit('error', new Error('fixture spawn failure'))); return c; } } });
   const r = await impl.launch('zcode', { zcode: { kind: 'app', target: __filename, label: 'fixture' } });
   assert.equal(processFilter, path.basename(__filename)); assert.equal(r.ok, false); assert.match(r.message, /spawn failure/);
-  const url = await impl.launch('gemini', {});
+  const url = await impl.launch('gemini', { gemini: { kind: 'url', target: 'https://fixture.invalid' } });
   assert.equal(url.ok, false); assert.match(url.message, /browser failure/);
+});
+
+test('Gemini desktop uses a stable installed entry, focuses its process and falls back to web when absent', async () => {
+  let installed = true, running = false, spawns = 0, focused = 0, opened = 0;
+  const impl = mockedModule('src/main/launcher.js', {
+    fs: { existsSync: p => installed && /[\\/]Google[\\/]Gemini[\\/]Gemini\.exe$/.test(p) },
+    electron: { shell: { openExternal: async () => { opened++; } } },
+    './winsnap': { findWindow: (_, exe) => running && exe === 'Gemini.exe' ? { hwnd: 'fixture' } : null, focusWindow: () => { focused++; } },
+    child_process: { execFileSync: () => '', spawn: () => { spawns++; const child = new EventEmitter(); child.unref = () => {}; process.nextTick(() => child.emit('spawn')); return child; } },
+  });
+  const spec = impl.resolve('gemini', {});
+  assert.equal(spec.kind, 'app'); assert.equal(spec.process, 'Gemini.exe'); assert.doesNotMatch(spec.target, /app-\d/);
+  assert.equal((await impl.launch('gemini', {})).ok, true); assert.equal(spawns, 1); assert.equal(opened, 0);
+  running = true;
+  assert.equal((await impl.launch('gemini', {})).already, true); assert.equal(focused, 1); assert.equal(spawns, 1);
+  installed = false; running = false;
+  assert.equal(impl.resolve('gemini', {}).kind, 'url');
+  assert.equal((await impl.launch('gemini', {})).ok, true); assert.equal(opened, 1);
+});
+
+test('GPT uses registered Windows activation without a personal repair script or blocking process scan', async () => {
+  let processScans = 0;
+  const calls = [];
+  const impl = mockedModule('src/main/launcher.js', {
+    fs: { existsSync: () => true },
+    electron: { shell: {} },
+    './winsnap': { findWindow: () => null },
+    child_process: {
+      execFileSync: () => { processScans++; return '"ChatGPT.exe","fixture"'; },
+      spawn: (command, args) => { calls.push({ command, args }); const child = new EventEmitter(); child.unref = () => {}; process.nextTick(() => child.emit('spawn')); return child; },
+    },
+  });
+  assert.equal(impl.defaults().codex.script, undefined);
+  const result = await impl.launch('codex', {});
+  assert.equal(result.ok, true); assert.equal(result.already, undefined);
+  assert.equal(processScans, 0);
+  assert.equal(calls[0].command, 'explorer.exe');
+  assert.equal(calls[0].args[0], 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App');
 });

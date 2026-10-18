@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const FILES = ['package.json', 'package-lock.json', '.npmrc', '.gitignore', 'start.cmd', 'README.md', 'THIRD_PARTY_NOTICES.md',
   'scripts/start.ps1', 'scripts/pack.js', 'scripts/release-files.js', 'scripts/install-shortcuts.ps1',
-  'scripts/test-behavior.js', 'scripts/test-data.js', 'scripts/test-release.js'];
+  'scripts/test-behavior.js', 'scripts/test-data.js', 'scripts/test-release.js', 'scripts/test-geometry.js'];
 function filesForRelease(root) {
   const files = [...FILES];
   function walk(relative) {

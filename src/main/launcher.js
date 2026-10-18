@@ -15,12 +15,16 @@ function defaults() {
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   const zcodeTarget = [path.join(programFiles, 'ZCode', 'ZCode.exe'), path.join(localApps, 'ZCode', 'ZCode.exe')].find(exists) || path.join(programFiles, 'ZCode', 'ZCode.exe');
   const dshTarget = [path.join(localApps, 'DSH Desktop', 'DSH Desktop.exe'), path.join(programFiles, 'DSH Desktop', 'DSH Desktop.exe')].find(exists) || path.join(localApps, 'DSH Desktop', 'DSH Desktop.exe');
+  // Google 的稳定入口会转交给当前版本，避免固定 app-x.y.z 下的 exe。
+  const geminiTarget = [path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Google', 'Gemini', 'Gemini.exe'), path.join(programFiles, 'Google', 'Gemini', 'Gemini.exe'), path.join(localApps, 'Gemini', 'Gemini.exe'), path.join(programFiles, 'Gemini', 'Gemini.exe')].find(exists);
   return {
     deepseek: { kind: 'app', label: 'DSH Desktop', target: dshTarget, match: 'DeepSeek Harness|DSH Desktop', process: 'DSH Desktop.exe', fallbackUrl: 'https://chat.deepseek.com' },
-    codex: { kind: 'store', label: 'Codex 桌面版', target: 'OpenAI.Codex_2p2nqsd0c76g0!App', match: '^(Codex|ChatGPT)(\\b|$)', process: 'ChatGPT.exe', script: path.join(HOME, 'bin', 'codex-open.ps1'), fallbackUrl: 'https://chatgpt.com/codex' },
+    codex: { kind: 'store', label: 'GPT / Codex 桌面版', target: 'OpenAI.Codex_2p2nqsd0c76g0!App', match: '^(Codex|ChatGPT)(\\b|$)', process: 'ChatGPT.exe', fallbackUrl: 'https://chatgpt.com/codex' },
     claude: { kind: 'wsl-cli', label: 'Claude Code (WSL)', distro: '', command: 'claude', cwd: '~' },
     zcode: { kind: 'app', label: 'ZCode', target: zcodeTarget, match: '^ZCode', process: 'ZCode.exe' },
-    gemini: { kind: 'url', label: 'Gemini 网页', target: 'https://gemini.google.com' },
+    gemini: geminiTarget
+      ? { kind: 'app', label: 'Gemini 桌面版', target: geminiTarget, match: '^(Google\\s+)?Gemini(\\b|$)', process: 'Gemini.exe', fallbackUrl: 'https://gemini.google.com' }
+      : { kind: 'url', label: 'Gemini 网页', target: 'https://gemini.google.com' },
     qwen: { kind: 'url', label: '千问网页', target: 'https://chat.qwen.ai' },
     kimi: { kind: 'url', label: 'Kimi 网页', target: 'https://www.kimi.com' },
     grok: { kind: 'url', label: 'Grok 网页', target: 'https://grok.com' },
@@ -43,17 +47,11 @@ function resolve(characterId, userLaunch) {
   return d || null;
 }
 
-const { execFileSync } = require('child_process');
-function processRunning(name) {
-  if (!name) return false;
-  try { const out = execFileSync('tasklist.exe', ['/fi', `imagename eq ${name}`, '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }); return /^"/.test(out.trim()); } catch (_) { return false; }
-}
-// 返回 { window? , process? }；都没有则 null
+// 只把真正可唤起的主窗口视为已打开；残留后台进程不能阻止系统入口重新激活应用。
 function isRunning(spec) {
   let win = null;
   if (spec.match || spec.process) { try { win = winsnap.findWindow(spec.match || '.', spec.process); } catch (_) { /* */ } }
   if (win) return { window: win };
-  if (spec.process && processRunning(spec.process)) return { process: spec.process };
   return null;
 }
 
@@ -74,8 +72,6 @@ async function launch(characterId, userLaunch) {
   const running = isRunning(spec);
   if (running && (spec.kind === 'app' || spec.kind === 'store')) {
     if (running.window) { focus(running.window.hwnd); return { ok: true, message: `${spec.label} 已经开着啦`, already: true }; }
-    // 只有进程没有窗口：有专用启动脚本就交给脚本判定/修复，否则视为已开
-    if (!(spec.script && exists(spec.script))) return { ok: true, message: `${spec.label} 已经开着啦`, already: true };
   }
   try {
     switch (spec.kind) {
@@ -84,7 +80,7 @@ async function launch(characterId, userLaunch) {
         await run(spec.target, spec.args || [], { cwd: path.dirname(spec.target) });
         return { ok: true, message: '正在打开 ' + spec.label };
       case 'store':
-        // 有用户自己的可靠启动脚本（处理 Codex 黑屏竞态）就优先用
+        // 仅使用用户明确配置的脚本，默认走 Windows 注册的桌面入口。
         if (spec.script && exists(spec.script)) await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', spec.script, '-NoKill'], { windowsHide: true });
         else await run('explorer.exe', ['shell:AppsFolder\\' + spec.target]);
         return { ok: true, message: '正在打开 ' + spec.label };

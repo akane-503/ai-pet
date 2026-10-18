@@ -10,10 +10,16 @@ function init() {
     const user32 = koffi.load('user32.dll');
     const dwmapi = koffi.load('dwmapi.dll');
     const kernel32 = koffi.load('kernel32.dll');
+    const shell32 = koffi.load('shell32.dll');
     const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
     const EnumWindowsProc = koffi.proto('bool __stdcall EnumWindowsProc(void *hwnd, intptr lParam)');
+    const MONITORINFO = koffi.struct('MONITORINFO', { cbSize: 'uint32', rcMonitor: RECT, rcWork: RECT, dwFlags: 'uint32' });
+    const APPBARDATA = koffi.struct('APPBARDATA', { cbSize: 'uint32', hWnd: 'void *', uCallbackMessage: 'uint32', uEdge: 'uint32', rc: RECT, lParam: 'intptr' });
     api = {
-      RECT, EnumWindowsProc,
+      RECT, EnumWindowsProc, MONITORINFO, APPBARDATA,
+      MonitorFromWindow: user32.func('void * __stdcall MonitorFromWindow(void *hwnd, uint32 flags)'),
+      GetMonitorInfoW: user32.func('bool __stdcall GetMonitorInfoW(void *monitor, _Inout_ MONITORINFO *info)'),
+      SHAppBarMessage: shell32.func('uintptr __stdcall SHAppBarMessage(uint32 msg, _Inout_ APPBARDATA *data)'),
       EnumWindows: user32.func('bool __stdcall EnumWindows(EnumWindowsProc *cb, intptr lParam)'),
       IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(void *hwnd)'),
       IsWindow: user32.func('bool __stdcall IsWindow(void *hwnd)'),
@@ -171,4 +177,31 @@ function focusWindow(hwndStr) {
 }
 function available() { return !!init(); }
 
-module.exports = { listWindows, windowRect, available, focusWindow, findWindow, foregroundWindow, titledWindows };
+// 只读查询任务栏状态与所属显示器；不修改系统自动隐藏设置。
+function taskbars() {
+  const a = init(); if (!a) return null;
+  const out = [];
+  let failed = false;
+  const cb = koffi.register(hwnd => {
+    try {
+      const name = ['\0'.repeat(128)];
+      const n = a.GetClassNameW(hwnd, name, 128);
+      if (!/^Shell_(Secondary)?TrayWnd$/.test(name[0].slice(0, n))) return true;
+      const info = { cbSize: koffi.sizeof(a.MONITORINFO) };
+      if (!a.GetMonitorInfoW(a.MonitorFromWindow(hwnd, 2), info)) { failed = true; return true; }
+      const rect = {}; if (!a.GetWindowRect(hwnd, rect)) { failed = true; return true; }
+      const monitor = info.rcMonitor;
+      const horizontal = rect.right - rect.left >= rect.bottom - rect.top;
+      const edge = horizontal
+        ? (Math.abs(rect.top - monitor.top) < Math.abs(rect.bottom - monitor.bottom) ? 'top' : 'bottom')
+        : (Math.abs(rect.left - monitor.left) < Math.abs(rect.right - monitor.right) ? 'left' : 'right');
+      const state = a.SHAppBarMessage(4, { cbSize: koffi.sizeof(a.APPBARDATA) });
+      out.push({ rect, monitor, edge, visible: !!a.IsWindowVisible(hwnd), autoHide: !!(Number(state) & 1) });
+    } catch (_) { failed = true; }
+    return true;
+  }, koffi.pointer(a.EnumWindowsProc));
+  try { if (!a.EnumWindows(cb, 0)) failed = true; } finally { koffi.unregister(cb); }
+  return failed ? null : out;
+}
+
+module.exports = { listWindows, windowRect, available, focusWindow, findWindow, foregroundWindow, titledWindows, taskbars };

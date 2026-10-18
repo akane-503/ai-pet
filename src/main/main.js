@@ -11,6 +11,7 @@ const news = require('./news');
 const winsnap = require('./winsnap');
 const launcher = require('./launcher');
 const quipsGen = require('./quips');
+const geometry = require('../shared/geometry');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const ASSETS = path.join(ROOT, 'assets');
@@ -71,8 +72,36 @@ let quitting = false;
 
 // ---------- 工具 ----------
 function log(...a) { console.log(new Date().toISOString().slice(11, 19), ...a); }
-function baseFor(scale) { return Math.round(260 * Math.max(0.5, Math.min(2.4, Number(scale) || 1))); }
-function winSizeForScale(scale) { const b = baseFor(scale); return { width: b + 12, height: b + 24 }; }
+function winSizeForScale(scale) { return geometry.windowSize(scale); }
+let desktopAreas = new Map();
+function areaFor(display) { return desktopAreas.get(display.id) || display.workArea; }
+function updateScreenAreas() {
+  const displays = screen.getAllDisplays();
+  const nativeBars = winsnap.taskbars();
+  const bars = nativeBars && nativeBars.map(bar => {
+    const m = bar.monitor;
+    const center = screen.screenToDipPoint({ x: Math.round((m.left + m.right) / 2), y: Math.round((m.top + m.bottom) / 2) });
+    const d = screen.getDisplayNearestPoint(center), sf = d.scaleFactor;
+    return { ...bar, displayId: d.id, rect: {
+      left: d.bounds.x + (bar.rect.left - m.left) / sf, top: d.bounds.y + (bar.rect.top - m.top) / sf,
+      right: d.bounds.x + (bar.rect.right - m.left) / sf, bottom: d.bounds.y + (bar.rect.bottom - m.top) / sf,
+    } };
+  });
+  const next = new Map(displays.map(d => [d.id, geometry.workArea(d, bars)]));
+  const changed = JSON.stringify([...next]) !== JSON.stringify([...desktopAreas]);
+  desktopAreas = next;
+  if (!changed || !petWin || !boxReceived || drag || attach || pendingSettle) return;
+  const rect = petRect(), area = areaFor(displayFor(rect)), sn = config.data.layout.snapped || {};
+  const p = geometry.clampPosition(rect, area);
+  if (sn.h === 'left') p.x = area.x;
+  if (sn.h === 'right') p.x = area.x + area.width - rect.width;
+  if (sn.v === 'top') p.y = area.y;
+  if (sn.v === 'bottom') p.y = area.y + area.height - rect.height;
+  clearInterval(animTimer);
+  movePet(p.x - petBox.x, p.y - petBox.y);
+  Object.assign(config.data.layout, { x: Math.round(p.x - petBox.x), y: Math.round(p.y - petBox.y) });
+  config.saveSoon();
+}
 function enabledProviders() { return (config.data.providers || []).filter((p) => p && p.enabled); }
 function providerById(id) { return (config.data.providers || []).find((p) => p.id === id); }
 
@@ -333,7 +362,7 @@ function createPetWindow() {
   const { width, height } = winSizeForScale(config.data.appearance.scale);
   const lay = config.data.layout || {};
   let x = lay.x, y = lay.y;
-  const prim = screen.getPrimaryDisplay().workArea;
+  const prim = areaFor(screen.getPrimaryDisplay());
   if (typeof x !== 'number' || typeof y !== 'number') { x = prim.x + prim.width - width - 20; y = prim.y + prim.height - height; }
   flipped = typeof lay.flipped === 'boolean' ? lay.flipped : !!(lay.snapped && lay.snapped.h === 'left');
   petWin = new BrowserWindow({
@@ -362,7 +391,7 @@ function petRect() { const b = petWin.getBounds(); return { x: b.x + petBox.x, y
 function ensureOnScreen() {
   if (!petWin) return;
   const b = petWin.getBounds();
-  const d = displayFor(petRect()).workArea;
+  const d = areaFor(displayFor(petRect()));
   const x = Math.min(Math.max(b.x, d.x - petBox.x), d.x + d.width - petBox.x - petBox.w);
   const y = Math.min(Math.max(b.y, d.y - petBox.y), d.y + d.height - petBox.y - petBox.h);
   if (x !== b.x || y !== b.y) movePet(x, y);
@@ -428,7 +457,7 @@ function computeSnap() {
   }
   // 屏幕边缘离得更近（或一样近）时优先贴屏幕边，免得被旁边窗口的边抢走差几个像素
   if (best && config.data.appearance.snapScreen) {
-    const wa0 = displayFor(pet).workArea;
+    const wa0 = areaFor(displayFor(pet));
     const edges = [pet.x - wa0.x, wa0.x + wa0.width - pet.right, pet.y - wa0.y, wa0.y + wa0.height - pet.bottom].map(Math.abs).filter((d) => d < T);
     if (edges.length && Math.min(...edges) <= best.dist) best = null;
   }
@@ -445,16 +474,16 @@ function computeSnap() {
   } else if (config.data.appearance.snapScreen) {
     // 2) 屏幕边缘：只在离边 T 以内（含拖出屏幕外）时吸附。按角色中心所在的显示器算，
     //    相邻显示器之间的内边也吸（离得近说明是有意放到交界处）
-    const wa = displayFor(pet).workArea;
+    const wa = areaFor(displayFor(pet));
     if (pet.x - wa.x < T) { tx = wa.x; h = 'left'; }
     else if (wa.x + wa.width - pet.right < T) { tx = wa.x + wa.width - pet.w; h = 'right'; }
     if (pet.y - wa.y < T) { ty = wa.y; v = 'top'; }
     else if (wa.y + wa.height - pet.bottom < T) { ty = wa.y + wa.height - pet.h; v = 'bottom'; }
   }
   // 3) 钳制到整个虚拟桌面（允许跨屏），但不能落到没有显示器的地方
-  const wa = displayFor({ x: tx, y: ty, width: pet.w, height: pet.h }).workArea;
-  if (h) tx = Math.min(Math.max(tx, wa.x), wa.x + wa.width - pet.w);
-  ty = Math.min(Math.max(ty, wa.y), wa.y + wa.height - pet.h);
+  const wa = areaFor(displayFor({ x: tx, y: ty, width: pet.w, height: pet.h }));
+  const safe = geometry.clampPosition({ x: tx, y: ty, width: pet.w, height: pet.h }, wa);
+  tx = safe.x; ty = safe.y;
   if (process.env.AIPET_DEBUG_SCRIPT) log('snap', JSON.stringify({ pet: { x: pet.x, y: pet.y, w: pet.w, h: pet.h }, wa, tx, ty, h, v, att: !!att, disp: screen.getAllDisplays().map((d) => ({ b: d.bounds, wa: d.workArea, sf: d.scaleFactor })) }));
   // 返回角色图片应落到的屏幕位置；换算成窗口位置放在 finishSettle 里做（翻转后 petBox 会变，要等渲染层上报）
   // 没贴左右边时保持原来的朝向，不来回转身
@@ -503,9 +532,19 @@ function startAttachLoop() {
   attachTimer = setInterval(() => {
     if (!petWin || drag) return;
     const rect = winsnap.windowRect(attach.hwnd);
-    if (!rect) { attach = null; clearInterval(attachTimer); sendPet('snap', { h: null, v: null, attached: false }); return; }
+    if (!rect) {
+      attach = null; clearInterval(attachTimer); clearInterval(animTimer); pendingSettle = null;
+      // 工具关闭/最小化时保留当前朝向，避免无 flip 的消息把角色翻到窗口另一侧、挤出屏幕。
+      flipped = !!petBox.flipped;
+      sendPet('snap', { h: null, v: null, flip: flipped, attached: false });
+      ensureOnScreen();
+      const b = petWin.getBounds();
+      config.data.layout = { x: b.x, y: b.y, snapped: { h: null, v: null }, flipped };
+      config.saveSoon();
+      return;
+    }
     const d = physToDip(rect);
-    const key = `${d.x},${d.y},${d.w},${d.h}`;
+    const key = `${d.x},${d.y},${d.w},${d.h}:${JSON.stringify([...desktopAreas])}`;
     if (key === lastKey) return;
     lastKey = key;
     let px, py;
@@ -515,7 +554,8 @@ function startAttachLoop() {
       case 'right': px = d.right; py = d.y + attach.dy; break;
       default: px = d.x - petBox.w; py = d.y + attach.dy;
     }
-    movePet(px - petBox.x, py - petBox.y);
+    const safe = geometry.clampPosition({ x: px, y: py, width: petBox.w, height: petBox.h }, areaFor(displayFor({ x: px, y: py, width: petBox.w, height: petBox.h })));
+    movePet(safe.x - petBox.x, safe.y - petBox.y);
   }, 50);
 }
 
@@ -567,7 +607,7 @@ async function launchFor(characterId) {
   const r = await launcher.launch(characterId, config.data.launch);
   if (r.ok) { recent = { character: characterId, at: Date.now(), reason: 'launch' }; pushData(); }
   log('launch', characterId, r);
-  sendPet('cmd', { name: 'say', lines: [{ t: r.ok ? (r.already ? '已经开着啦~' : '出发！') : '打不开...', s: 'P', c: r.ok ? '' : '#e0433f' }, { t: r.message, s: 'C', w: true }] });
+  sendPet('cmd', { name: 'say', seconds: r.ok ? 1.2 : 3, restoreInfo: true, lines: [{ t: r.ok ? (r.already ? '已经开着啦~' : '出发！') : '打不开...', s: 'P', c: r.ok ? '' : '#e0433f' }, { t: r.message, s: 'C', w: true }] });
 }
 function launchCurrent() { launchFor(currentCharacter || resolveCharacter()); }
 
@@ -618,7 +658,7 @@ ipcMain.on('pet:box', (e, box) => {
     // 换立绘或胖瘦时保留原来的贴边落点，避免透明边距差异把角色挤出屏幕。
     const b = petWin.getBounds();
     const old = { x: b.x + prev.x, y: b.y + prev.y, width: prev.w, height: prev.h };
-    const wa = displayFor(old).workArea;
+    const wa = areaFor(displayFor(old));
     const sn = config.data.layout.snapped || {};
     let x = b.x + prev.x - box.x, y = b.y + prev.y + prev.h - box.y - box.h;
     if (!attach && sn.h === 'left') x = wa.x - box.x;
@@ -626,11 +666,24 @@ ipcMain.on('pet:box', (e, box) => {
     else if (attach && attach.mode === 'left') x = b.x + prev.x + prev.w - box.x - box.w;
     if (!attach && sn.v === 'top') y = wa.y - box.y;
     else if (!attach && sn.v === 'bottom') y = wa.y + wa.height - box.y - box.h;
+    const safe = geometry.clampPosition({ x: x + box.x, y: y + box.y, width: box.w, height: box.h }, wa);
+    x = safe.x - box.x; y = safe.y - box.y;
     movePet(x, y);
     config.data.layout.x = Math.round(x); config.data.layout.y = Math.round(y); config.saveSoon();
     if (attach) startAttachLoop();
   }
-  boxReceived = true;
+  if (!boxReceived) {
+    boxReceived = true;
+    // 透明边距或立绘尺寸变化后，启动时也按保存的吸附边恢复，而非保留旧窗口坐标造成空隙。
+    const rect = petRect(), area = areaFor(displayFor(rect)), sn = config.data.layout.snapped || {};
+    let x = rect.x, y = rect.y;
+    if (sn.h === 'left') x = area.x;
+    if (sn.h === 'right') x = area.x + area.width - rect.width;
+    if (sn.v === 'top') y = area.y;
+    if (sn.v === 'bottom') y = area.y + area.height - rect.height;
+    movePet(x - box.x, y - box.y);
+    ensureOnScreen();
+  }
 });
 ipcMain.on('mouse:ignore', (e, ignore) => { if (petWin) petWin.setIgnoreMouseEvents(!!ignore, { forward: true }); });
 ipcMain.on('drag:start', (e, pt) => { if (!petWin) return; clearInterval(animTimer); closePanel(); const b = petWin.getBounds(); drag = { sx: pt.x, sy: pt.y, wx: b.x, wy: b.y }; attach = null; pendingSettle = null; clearInterval(attachTimer); });
@@ -658,7 +711,7 @@ ipcMain.on('resnap', () => settle());
 ipcMain.on('pet:recover', () => {
   if (!petWin) return;
   clearInterval(animTimer); clearInterval(attachTimer); attach = null; pendingSettle = null; drag = null;
-  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const wa = areaFor(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()));
   config.data.layout.snapped = { h: 'right', v: 'bottom' };
   movePet(wa.x + wa.width - petBox.x - petBox.w, wa.y + wa.height - petBox.y - petBox.h);
   flipped = false; sendPet('snap', { flip: false });
@@ -694,6 +747,7 @@ app.on('window-all-closed', (e) => { /* 托盘常驻 */ });
 app.on('before-quit', () => { quitting = true; closePanel(); config.save(); state.save(); });
 
 app.whenReady().then(() => {
+  updateScreenAreas();
   const firstRun = !config.data.firstRunDone;
   if (firstRun) { config.data.firstRunDone = true; config.save(); }
   createTray();
@@ -703,11 +757,11 @@ app.whenReady().then(() => {
   refreshAll({ force: true, reason: 'startup' });
   scheduleRefresh();
   activityTimer = setInterval(checkActivity, 10000);
-  setInterval(checkWindows, 1000); checkWindows();
+  setInterval(() => { updateScreenAreas(); checkWindows(); }, 1000); checkWindows();
   setInterval(checkQuotaResets, 15000);
   setTimeout(() => refreshQuips(), 20000); setInterval(() => refreshQuips(), 10 * 60000);
   powerMonitor.on('resume', () => setTimeout(() => refreshAll({ force: true, reason: 'resume' }), 5000));
-  screen.on('display-metrics-changed', () => setTimeout(() => { ensureOnScreen(); }, 500));
+  screen.on('display-metrics-changed', () => setTimeout(() => { updateScreenAreas(); ensureOnScreen(); }, 500));
   config.data.autostart = fs.existsSync(startupLnk()); updateTrayMenu();
   if (!app.isPackaged && process.env.AIPET_DEBUG_SCRIPT) {
     try { require(process.env.AIPET_DEBUG_SCRIPT)({ app, petWin: () => petWin, settingsWin: () => settingsWin, setAppearance, refreshAll, sendPet, checkWindows, currentSelection: characterSelection, openSettings, settle, log, ROOT, emit: (ch, payload) => ipcMain.emit(ch, {}, payload), petBox: () => petBox, refreshQuips, shot: async (file, x, y, w, h) => { const { desktopCapturer } = require('electron'); const d = screen.getPrimaryDisplay(); const sf = d.scaleFactor; const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(d.size.width * sf), height: Math.round(d.size.height * sf) } }); const src = srcs.find((s) => String(s.display_id) === String(d.id)) || srcs[0]; const img = src.thumbnail.crop({ x: Math.round(x * sf), y: Math.round(y * sf), width: Math.round(w * sf), height: Math.round(h * sf) }); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('shot', file); }, capture: async (win, file) => { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('captured', file, win.getBounds()); } }); } catch (e) { log('debug script failed', e); }

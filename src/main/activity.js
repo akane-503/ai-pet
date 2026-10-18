@@ -101,6 +101,7 @@ const NATIVE_RULES = [
   [/^ZCode(\s*[-–—|]|$)/i, 'zcode'],
   [/Claude Code/i, 'claude'],
   [/^(Codex|ChatGPT)(\s*[-–—|]|$)/i, 'codex'],
+  [/^(?:Google\s+)?Gemini(\s*[-–—|]|$)/i, 'gemini'],
 ];
 const WEB_RULES = [
   [/^Gemini\b/i, 'gemini'], [/^Kimi\b/i, 'kimi'], [/^(Qwen|千问|通义)/i, 'qwen'], [/^Grok\b/i, 'grok'], [/^(豆包|Doubao)/i, 'seed'],
@@ -118,7 +119,7 @@ function characterForTitle(title) {
 function characterForWindow(win) {
   if (!win) return null;
   const exe = String(win.processName || '').toLowerCase();
-  const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude' };
+  const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini' };
   if (native[exe]) return native[exe];
   if (/^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/.test(exe) || BROWSER_RE.test(win.title || '')) {
     for (const [re, id] of WEB_RULES) if (re.test(String(win.title || '').trim())) return id;

@@ -1,17 +1,16 @@
 :root { --base: 260px; --u: calc(var(--base) / 1026); --line: #203170; --text: #536ba9; --hint: #9fb0d9; --chub: 1; }
 * { box-sizing: border-box; user-select: none; -webkit-user-drag: none; }
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif; }
-.root { position: absolute; right: 0; bottom: 0; width: var(--base); height: var(--base); }
+.root { position: absolute; right: var(--pad, 12px); bottom: var(--pad, 12px); width: var(--base); height: var(--base); }
 .root.left { transform: scaleX(-1); }
 .body { position: absolute; inset: 0; transform-origin: 50% 100%; transition: transform .22s cubic-bezier(.34,1.56,.64,1); }
-.body.pressed { transform: scaleY(.88) scaleX(1.05); }
+.body.pressed { transform: scale(.97); }
 .img-wrap { position: absolute; right: 0; bottom: 0; width: 59.45%; height: 59.45%; transform-origin: 50% 100%; transition: transform .12s ease-out; }
-.root.turning .img-wrap { transform: scaleX(0); transition-timing-function: ease-in; }
 .img { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; pointer-events: none; transform-origin: 50% 100%; transform: scaleX(var(--chub)); filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)); }
 .idle .img { animation: bob 3.4s ease-in-out infinite; }
 @keyframes bob { 0%, 100% { transform: translateY(0) scaleX(var(--chub)); } 50% { transform: translateY(calc(var(--u) * -8)) scaleX(var(--chub)); } }
 .hop .body { animation: hop .5s cubic-bezier(.3,1.5,.6,1); }
-@keyframes hop { 0% { transform: translateY(0) } 35% { transform: translateY(calc(var(--u) * -40)) scaleX(.96) scaleY(1.05) } 70% { transform: translateY(0) scaleX(1.05) scaleY(.93) } 100% { transform: none } }
+@keyframes hop { 0% { transform: translateY(0) } 35% { transform: translateY(calc(var(--u) * -40)) scale(1.03) } 70% { transform: translateY(0) scale(.99) } 100% { transform: none } }
 
 /* 气泡（原版几何） */
 .bubble { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 1026/700; pointer-events: none; z-index: 1; }
