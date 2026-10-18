@@ -11,6 +11,10 @@
       y: Math.max(area.y, Math.min(rect.y, area.y + Math.max(0, area.height - rect.height))),
     };
   }
+  function coversMonitor(rect, monitor) {
+    return !!rect && rect.left <= monitor.left + 1 && rect.top <= monitor.top + 1
+      && rect.right >= monitor.right - 1 && rect.bottom >= monitor.bottom - 1;
+  }
   function workArea(display, taskbars) {
     const b = display.bounds, area = { ...display.workArea };
     // Native probing unavailable: retain Electron's safe fallback, including other app bars.
@@ -21,7 +25,7 @@
       const r = bar.rect;
       const visibleWidth = Math.max(0, Math.min(r.right, b.x + b.width) - Math.max(r.left, b.x));
       const visibleHeight = Math.max(0, Math.min(r.bottom, b.y + b.height) - Math.max(r.top, b.y));
-      const hidden = !bar.visible || bar.autoHide || (bar.edge === 'left' || bar.edge === 'right' ? visibleWidth : visibleHeight) <= 3;
+      const hidden = !bar.visible || bar.autoHide || bar.occludedByFullscreen || (bar.edge === 'left' || bar.edge === 'right' ? visibleWidth : visibleHeight) <= 3;
       if (!hidden) {
         if (bar.edge === 'left') area.x = Math.max(area.x, r.right);
         if (bar.edge === 'right') right = Math.min(right, r.left);
@@ -37,7 +41,7 @@
     area.width = right - area.x; area.height = bottom - area.y;
     return area;
   }
-  const geometry = { windowSize, clampPosition, workArea };
+  const geometry = { windowSize, clampPosition, coversMonitor, workArea };
   if (typeof module === 'object' && module.exports) module.exports = geometry;
   else root.PetGeometry = geometry;
 })(typeof globalThis === 'object' ? globalThis : this);

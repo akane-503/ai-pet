@@ -23,6 +23,21 @@ test('fixed visible taskbar reserves space; hidden and auto-hide taskbars releas
 test('visible taskbar still reserves its rectangle when Electron reports a stale full work area', () => {
   assert.deepEqual(geometry.workArea({ ...display, workArea: display.bounds }, [bar]), display.workArea);
 });
+
+test('fullscreen occlusion releases the taskbar reserve only on the covered monitor and restores it afterwards', () => {
+  assert.deepEqual(geometry.workArea(display, [{ ...bar, occludedByFullscreen: true }]), display.bounds);
+  assert.deepEqual(geometry.workArea(display, [{ ...bar, displayId: 2, occludedByFullscreen: true }, bar]), display.workArea);
+  assert.deepEqual(geometry.workArea(display, [{ ...bar, occludedByFullscreen: false }]), display.workArea);
+});
+
+test('fullscreen detection requires covering all four monitor edges, not just a maximized work area', () => {
+  const monitor = { left: 1920, top: -100, right: 2820, bottom: 1340 };
+  assert.equal(geometry.coversMonitor({ ...monitor }, monitor), true);
+  assert.equal(geometry.coversMonitor({ ...monitor, left: 1919, bottom: 1341 }, monitor), true);
+  assert.equal(geometry.coversMonitor({ ...monitor, bottom: 1292 }, monitor), false);
+  assert.equal(geometry.coversMonitor({ ...monitor, left: 1950 }, monitor), false);
+  assert.equal(geometry.coversMonitor(null, monitor), false);
+});
 test('taskbar visibility is applied per monitor and preserves reservations on other edges', () => {
   assert.deepEqual(geometry.workArea(display, [{ ...bar, displayId: 2, visible: false }]), display.workArea);
   assert.deepEqual(geometry.workArea({ ...display, workArea: { x: 40, y: 0, width: 1880, height: 1032 } }, [{ ...bar, visible: false }]), { x: 40, y: 0, width: 1880, height: 1080 });
