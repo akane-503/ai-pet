@@ -25,6 +25,10 @@ test('native process identity survives task titles; spinner detection is restric
   assert.equal(activity.characterForWindow({ title: '◑ 修复桌宠', processName: 'WindowsTerminal.exe' }), 'claude');
   assert.equal(activity.characterForWindow({ title: '◑ 无关下载', processName: 'explorer.exe' }), null);
   assert.equal(activity.characterForWindow({ title: 'Gemini - Google Chrome', processName: 'chrome.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: '新的对话', processName: 'Gemini.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'Gemini', processName: 'unknown.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'Google Gemini', processName: 'unknown.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: '如何安装 Gemini Desktop - Google Chrome', processName: 'chrome.exe' }), null);
   assert.equal(activity.characterForWindow({ title: '如何安装 Claude Code - Google Chrome', processName: 'chrome.exe' }), null);
 });
 

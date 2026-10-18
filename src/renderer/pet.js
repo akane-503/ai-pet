@@ -14,6 +14,7 @@
   const seenNotices = new Set();
   let rollVersion = 0;
   let lastBalance = {}, readingBubble = false;
+  let gifTimer = null, refreshClickTimer = null;
 
   const QUIPS_COMMON = ['不知道用户有什么用，先赶走吧~', '我...我...我也要挣钱吗？', '我去吃饭啦，测完叫我', '坏了...用户彻底怒了！', '真当我是便宜货啊...', '恭喜你实现token自由！token全跑了！', '上下文又满了，要不要压缩一下？', '你已经连续工作很久了，起来喝口水', '今天的 bug 都是昨天的我写的', '用户：能不能再快点？我：能不能再加点钱？'];
   const QUIPS = {
@@ -72,7 +73,7 @@
         alphaCtx = alphaCanvas.getContext('2d', { willReadFrequently: true }); alphaCtx.drawImage(img, 0, 0);
         const d = alphaCtx.getImageData(0, 0, alphaCanvas.width, alphaCanvas.height).data;
         let x0 = alphaCanvas.width, y0 = alphaCanvas.height, x1 = 0, y1 = 0;
-        for (let y = 0; y < alphaCanvas.height; y += 2) for (let x = 0; x < alphaCanvas.width; x += 2) { if (d[(y * alphaCanvas.width + x) * 4 + 3] > 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+        for (let y = 0; y < alphaCanvas.height; y += 2) for (let x = 0; x < alphaCanvas.width; x += 2) { if (d[(y * alphaCanvas.width + x) * 4 + 3] > 24) { x0 = Math.min(x0, x); x1 = Math.max(x1, Math.min(alphaCanvas.width, x + 2)); y0 = Math.min(y0, y); y1 = Math.max(y1, Math.min(alphaCanvas.height, y + 2)); } }
         alphaBox = x1 > x0 ? { x0, y0, x1, y1 } : null;
       } catch (_) { alphaCtx = null; alphaBox = null; }
       reportBox();
@@ -88,7 +89,8 @@
   function applyMood() {
     const s = providerForCharacter(character) ? data.snapshots[providerForCharacter(character).id] : null;
     const f = s && Number.isFinite(s.fraction) ? s.fraction : 0.6;
-    document.documentElement.style.setProperty('--chub', (0.9 + Math.max(0, Math.min(1, f)) * 0.18).toFixed(3));
+    // 额度只带来轻微体型变化，避免低额度时把立绘明显压瘦。
+    document.documentElement.style.setProperty('--chub', (0.98 + Math.max(0, Math.min(1, f)) * 0.04).toFixed(3));
   }
 
   // 图片在窗口内的实际可见区域（用于吸附）。只用布局值计算，不受镜像/压扁/上下浮动等 transform 影响，
@@ -114,25 +116,31 @@
     const r = imgRect(flip);
     window.pet.send('pet:box', { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), flipped: flip });
   }
-  // 换朝向：先横向压扁到 0（不可见），在这一瞬间镜像并上报新框（主进程同时把窗口挪过去），再展开
-  let turnTimer = null;
+  // 镜像后立即上报稳定边界；重复吸附消息不能把转身动画卡在窄条状态。
   function setFlip(flip) {
-    if (flip === root.classList.contains('left')) { reportBox(); return; }
-    clearTimeout(turnTimer);
-    root.classList.add('turning');
-    turnTimer = setTimeout(() => {
-      root.classList.toggle('left', flip);
-      reportBox();
-      root.classList.remove('turning');
-    }, 130);
+    root.classList.toggle('left', flip);
+    reportBox();
   }
 
   // ---------- 气泡内容 ----------
   function setLines(lines, opts = {}) {
     rollVersion++;
+    clearTimeout(gifTimer); gifTimer = null;
     const els = [l1, l2, l3];
     gif.style.display = 'none';
-    if (lines && lines.gif) { gif.src = `file:///${ASSETS}/characters/rua.gif`; gif.style.display = 'block'; els.forEach((e) => { e.style.display = 'none'; }); return; }
+    if (lines && lines.gif) {
+      gif.removeAttribute('src'); gif.src = `file:///${ASSETS}/characters/rua.gif`; gif.style.display = 'block';
+      els.forEach((e) => { e.style.display = 'none'; });
+      // 动图短暂播放后恢复额度页；悬停暂停文字计时不应让表情包无限循环。
+      gifTimer = setTimeout(() => {
+        gifTimer = null; gif.style.display = 'none'; gif.removeAttribute('src');
+        if (bubble.classList.contains('open') && bubbleMode === 'random') {
+          pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(false); armBubbleTimer();
+        }
+      }, 1200);
+      return;
+    }
+    gif.removeAttribute('src');
     for (let i = 0; i < 3; i++) {
       const e = els[i], ln = lines[i];
       if (!ln) { e.style.display = 'none'; e.textContent = ''; continue; }
@@ -211,12 +219,14 @@
   }
   function armBubbleTimer() {
     clearTimeout(bubbleTimer);
+    if (gifTimer) return;
     if (readingBubble) return;
     const ap = data.config.appearance;
     bubbleTimer = setTimeout(hideBubble, bubbleMode === 'notice' ? 15000 : (Number(ap.bubbleSeconds) || 5) * 1000);
   }
   function hideBubble() {
     clearTimeout(bubbleTimer); bubbleTimer = null;
+    clearTimeout(gifTimer); gifTimer = null; gif.style.display = 'none'; gif.removeAttribute('src'); readingBubble = false;
     rollVersion++;
     bubble.classList.remove('open'); bubbleMode = null; noticeLink = null; noticeId = null;
     setTimeout(drainNotices, 400);
@@ -288,10 +298,14 @@
     if (dragging) { dragging = false; window.pet.send('drag:end'); return; }
     if (e.type === 'pointercancel') return;
     if (bubbleMode === 'notice') return;
-    if (bubble.classList.contains('open')) hideBubble(); else { showBubble(); window.pet.send('refresh'); }
+    if (bubble.classList.contains('open')) hideBubble(); else {
+      showBubble();
+      clearTimeout(refreshClickTimer);
+      refreshClickTimer = setTimeout(() => { refreshClickTimer = null; window.pet.send('refresh'); }, 600);
+    }
   };
   document.addEventListener('pointerup', endPress); document.addEventListener('pointercancel', endPress);
-  document.addEventListener('dblclick', (e) => { if (hitTest(e) && !e.target.closest('#bubble')) window.pet.send('launch'); });
+  document.addEventListener('dblclick', (e) => { if (hitTest(e) && !e.target.closest('#bubble')) { clearTimeout(refreshClickTimer); refreshClickTimer = null; window.pet.send('launch'); } });
   document.addEventListener('contextmenu', (e) => { e.preventDefault(); if (e.target.closest('#bubble') && bubble.classList.contains('open')) { hideBubble(); return; } if (hitTest(e)) window.pet.send('context-menu'); });
   menuBtn.addEventListener('click', (e) => { e.stopPropagation(); window.pet.send('panel:toggle'); });
 
@@ -307,7 +321,9 @@
   window.pet.on('data', (d) => {
     const prevCharacter = character; data = d;
     const ap = d.config.appearance;
-    document.documentElement.style.setProperty('--base', Math.round(260 * (ap.scale || 1)) + 'px');
+    const size = window.PetGeometry.windowSize(ap.scale);
+    document.documentElement.style.setProperty('--base', size.base + 'px');
+    document.documentElement.style.setProperty('--pad', size.padding + 'px');
     root.classList.add('idle');
     applyCharacter(d.character); applyColors(); applyMood();
     if (!ap.bubbleOn && bubble.classList.contains('open')) hideBubble();
@@ -315,19 +331,27 @@
     setTimeout(reportBox, 80);
   });
   window.pet.on('notify', (n) => { if (n.id && seenNotices.has(n.id)) return; if (n.id) seenNotices.add(n.id); noticeQueue.push(n); drainNotices(); });
-  bubble.addEventListener('pointerenter', () => { readingBubble = true; clearTimeout(bubbleTimer); });
-  bubble.addEventListener('pointerleave', () => { readingBubble = false; if (bubble.classList.contains('open')) armBubbleTimer(); });
+  bubble.addEventListener('pointerenter', () => { readingBubble = true; if (bubbleMode !== 'status') clearTimeout(bubbleTimer); });
+  bubble.addEventListener('pointerleave', () => { readingBubble = false; if (bubbleMode !== 'status' && bubble.classList.contains('open')) armBubbleTimer(); });
   setInterval(() => { if (bubbleMode === 'info') { pages = buildPages(); pageIdx = Math.min(pageIdx, pages.length - 1); renderPage(false); } }, 30000);
   textBox.addEventListener('click', () => { if (bubbleMode === 'notice') bubbleClick(); });
   window.pet.on('snap', (s) => setFlip(!!s.flip));
-  function say(lines, seconds) { if (bubbleMode === 'notice' || noticeQueue.length) return; clearTimeout(bubbleTimer); bubble.classList.remove('notice'); setLines(lines, { fade: bubble.classList.contains('open') }); bubbleMode = 'random'; bubble.classList.add('open'); bubbleTimer = setTimeout(hideBubble, (seconds || 3) * 1000); }
+  function say(lines, seconds, restoreInfo = false) {
+    if (bubbleMode === 'notice' || noticeQueue.length) return;
+    clearTimeout(bubbleTimer); bubble.classList.remove('notice');
+    setLines(lines, { fade: bubble.classList.contains('open') }); bubbleMode = 'status'; bubble.classList.add('open');
+    bubbleTimer = setTimeout(() => {
+      if (!restoreInfo) { hideBubble(); return; }
+      pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(false); armBubbleTimer();
+    }, (seconds || 3) * 1000);
+  }
   // 闲置时隔一阵随口说一句（不打断已打开的气泡）
   (function idleLoop() {
     const ap = data.config && data.config.appearance; const min = ap ? Number(ap.idleQuipMin) : 6;
     const wait = (min > 0 ? min : 6) * 60000 * (0.7 + Math.random() * 0.8);
     setTimeout(() => { const a = data.config && data.config.appearance; if (a && a.quipsOn && Number(a.idleQuipMin) > 0 && !bubble.classList.contains('open') && !pressing) showBubble({ random: true }); idleLoop(); }, wait);
   })();
-  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds); else if (c.name === 'bubble') showBubble(); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
+  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds, c.restoreInfo); else if (c.name === 'bubble') showBubble(); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
   window.addEventListener('resize', () => setTimeout(reportBox, 50));
   window.__dbgPages = () => ({ active: data.activeProviders, pages: buildPages().map((p) => p.lines.filter(Boolean).map((l) => l.t)) });
   window.pet.send('pet:ready');

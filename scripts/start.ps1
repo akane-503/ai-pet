@@ -30,7 +30,16 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'Native window integration is unavailable. Check Node.js architecture and reinstall dependencies.' }
         }
         if ($InstallOnly) { Write-Host 'Dependencies ready.'; exit 0 }
-        Start-Process -FilePath $exe -ArgumentList ('"' + $root + '"') -WorkingDirectory $root -WindowStyle Hidden
+        # Launch through Explorer so the pet does not inherit an AI host's process Job.
+        $shortcutPath = Join-Path $root 'node_modules\AI-Pet-Start.lnk'
+        $shortcutShell = New-Object -ComObject WScript.Shell
+        $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $exe
+        $shortcut.Arguments = '"' + $root + '"'
+        $shortcut.WorkingDirectory = $root
+        $shortcut.IconLocation = Join-Path $root 'assets\app.ico'
+        $shortcut.Save()
+        Start-Process -FilePath explorer.exe -ArgumentList ('"' + $shortcutPath + '"') -WindowStyle Hidden
     } finally { Pop-Location }
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
