@@ -2,6 +2,7 @@
 // 通过 koffi 调用 user32/dwmapi 枚举可见顶层窗口，用于“吸附到窗口”。加载失败时退化为只吸附屏幕边缘。
 let koffi = null;
 let api = null;
+const { coversMonitor } = require('../shared/geometry');
 
 function init() {
   if (api !== null) return api;
@@ -12,6 +13,7 @@ function init() {
     const kernel32 = koffi.load('kernel32.dll');
     const shell32 = koffi.load('shell32.dll');
     const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+    const POINT = koffi.struct('POINT', { x: 'long', y: 'long' });
     const EnumWindowsProc = koffi.proto('bool __stdcall EnumWindowsProc(void *hwnd, intptr lParam)');
     const MONITORINFO = koffi.struct('MONITORINFO', { cbSize: 'uint32', rcMonitor: RECT, rcWork: RECT, dwFlags: 'uint32' });
     const APPBARDATA = koffi.struct('APPBARDATA', { cbSize: 'uint32', hWnd: 'void *', uCallbackMessage: 'uint32', uEdge: 'uint32', rc: RECT, lParam: 'intptr' });
@@ -36,6 +38,8 @@ function init() {
       DwmGetRect: dwmapi.func('DwmGetWindowAttribute', 'int', ['void *', 'uint32', koffi.out(koffi.pointer(RECT)), 'uint32']),
       DwmGetInt: dwmapi.func('DwmGetWindowAttribute', 'int', ['void *', 'uint32', koffi.out(koffi.pointer('int32')), 'uint32']),
       GetWindowRect: user32.func('bool __stdcall GetWindowRect(void *hwnd, _Out_ RECT *r)'),
+      WindowFromPoint: user32.func('void * __stdcall WindowFromPoint(POINT point)'),
+      GetAncestor: user32.func('void * __stdcall GetAncestor(void *hwnd, uint32 flags)'),
       SetForegroundWindow: user32.func('bool __stdcall SetForegroundWindow(void *hwnd)'),
       ShowWindow: user32.func('bool __stdcall ShowWindow(void *hwnd, int cmd)'),
     };
@@ -177,6 +181,29 @@ function focusWindow(hwndStr) {
 }
 function available() { return !!init(); }
 
+// WS_VISIBLE remains set when fullscreen video covers the taskbar. Probe its actual
+// screen surface, including when the pet or a small floating window has focus.
+function coveredByFullscreen(a, taskbar, rect, monitor) {
+  const left = Math.max(rect.left, monitor.left), top = Math.max(rect.top, monitor.top);
+  const right = Math.min(rect.right, monitor.right), bottom = Math.min(rect.bottom, monitor.bottom);
+  if (right <= left || bottom <= top) return false;
+  const horizontal = right - left >= bottom - top;
+  for (const fraction of [0.15, 0.5, 0.85]) {
+    const point = { x: Math.floor(left + (right - left) * (horizontal ? fraction : 0.5)), y: Math.floor(top + (bottom - top) * (horizontal ? 0.5 : fraction)) };
+    const hit = a.WindowFromPoint(point);
+    if (!hit) continue;
+    const root = a.GetAncestor(hit, 2 /* GA_ROOT */);
+    if (!root || koffi.address(root) === koffi.address(taskbar)) continue;
+    const cls = ['\0'.repeat(128)];
+    const n = a.GetClassNameW(root, cls, 128);
+    if (/^(Progman|WorkerW|Shell_TrayWnd|Shell_SecondaryTrayWnd)$/.test(cls[0].slice(0, n))) continue;
+    // Both APIs use the calling process's DPI coordinate system. DWM bounds do not.
+    const bounds = {};
+    if (a.GetWindowRect(root, bounds) && coversMonitor(bounds, monitor)) return true;
+  }
+  return false;
+}
+
 // 只读查询任务栏状态与所属显示器；不修改系统自动隐藏设置。
 function taskbars() {
   const a = init(); if (!a) return null;
@@ -196,7 +223,7 @@ function taskbars() {
         ? (Math.abs(rect.top - monitor.top) < Math.abs(rect.bottom - monitor.bottom) ? 'top' : 'bottom')
         : (Math.abs(rect.left - monitor.left) < Math.abs(rect.right - monitor.right) ? 'left' : 'right');
       const state = a.SHAppBarMessage(4, { cbSize: koffi.sizeof(a.APPBARDATA) });
-      out.push({ rect, monitor, edge, visible: !!a.IsWindowVisible(hwnd), autoHide: !!(Number(state) & 1) });
+      out.push({ rect, monitor, edge, visible: !!a.IsWindowVisible(hwnd), autoHide: !!(Number(state) & 1), occludedByFullscreen: coveredByFullscreen(a, hwnd, rect, monitor) });
     } catch (_) { failed = true; }
     return true;
   }, koffi.pointer(a.EnumWindowsProc));

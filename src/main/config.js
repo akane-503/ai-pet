@@ -17,6 +17,7 @@ function defaultConfig() {
       customImages: {},           // characterId -> 本机图片路径（覆盖内置立绘）
       bubbleOn: true,
       bubbleSeconds: 5,
+      headpatStyle: 'rub',        // rub(原版揉头节奏) | gentle(轻拍差分)
       sound: 'off',               // off | duck | fx1
       volume: 0.6,
       peakMode: 'default',        // default | liang | strong | off

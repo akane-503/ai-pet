@@ -1,7 +1,7 @@
 {
   "name": "ai-pet",
   "productName": "AI 桌宠",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "AI 额度桌宠：DeepSeek / Codex / 中转站 / GLM 额度显示 + 模型提示器",
   "main": "src/main/main.js",
   "private": true,

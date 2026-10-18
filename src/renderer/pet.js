@@ -65,6 +65,9 @@
     if (ch === character && src === imgSrc) return;
     const changed = character !== null;
     character = ch; imgSrc = src;
+    if (gifTimer) {
+      pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(false); armBubbleTimer();
+    }
     applyColors();
     alphaCtx = null; alphaBox = null;
     img.onload = () => {
@@ -116,20 +119,47 @@
     const r = imgRect(flip);
     window.pet.send('pet:box', { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), flipped: flip });
   }
-  // 镜像后立即上报稳定边界；重复吸附消息不能把转身动画卡在窄条状态。
+  let turnAnimation = null;
+  // 用位移和轻微的整体弹性转身，不把横向比例插值到零。吸附始终使用最终布局。
   function setFlip(flip) {
+    if (root.classList.contains('left') === flip) { reportBox(); return; }
+    const before = wrap.getBoundingClientRect();
+    if (turnAnimation) { turnAnimation.cancel(); turnAnimation = null; }
     root.classList.toggle('left', flip);
+    const after = wrap.getBoundingClientRect();
+    const margin = Math.min(8, after.width * 0.04);
+    const screenDx = Math.max(-after.left + margin, Math.min(innerWidth - after.right - margin, before.left - after.left));
+    const parentScale = after.width / wrap.offsetWidth || 1;
+    const dx = screenDx * (flip ? -1 : 1) / parentScale;
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const lift = Math.min(6, wrap.offsetHeight * 0.025);
+      turnAnimation = wrap.animate([
+        { transform: `translateX(${dx}px) scale(.97)`, offset: 0 },
+        { transform: `translateY(${-lift}px) scale(1.015)`, offset: 0.58 },
+        { transform: 'translateY(0) scale(.99)', offset: 0.82 },
+        { transform: 'none', offset: 1 },
+      ], { duration: 420, easing: 'cubic-bezier(.22,.75,.3,1)' });
+      const current = turnAnimation;
+      current.onfinish = () => { if (turnAnimation === current) turnAnimation = null; };
+    }
     reportBox();
   }
 
   // ---------- 气泡内容 ----------
+  function headpatFor(ch) {
+    const images = data.characterImages || {};
+    return data.config.appearance.headpatStyle === 'gentle'
+      ? images[`headpat-${ch}`] : (images[ch === 'seed' ? 'nailong-seed' : `rub-${ch}`] || images[`headpat-${ch}`]);
+  }
   function setLines(lines, opts = {}) {
     rollVersion++;
     clearTimeout(gifTimer); gifTimer = null;
     const els = [l1, l2, l3];
     gif.style.display = 'none';
     if (lines && lines.gif) {
-      gif.removeAttribute('src'); gif.src = `file:///${ASSETS}/characters/rua.gif`; gif.style.display = 'block';
+      const headpat = headpatFor(character);
+      if (!headpat) { setLines([null, { t: '好模型… ↓', s: 'B' }, null]); return; }
+      gif.removeAttribute('src'); gif.src = 'file:///' + headpat.replace(/^\/+/, ''); gif.style.display = 'block';
       els.forEach((e) => { e.style.display = 'none'; });
       // 动图短暂播放后恢复额度页；悬停暂停文字计时不应让表情包无限循环。
       gifTimer = setTimeout(() => {
@@ -192,7 +222,7 @@
     const gen = (data.quips && data.quips[character]) || [];
     const own = [...(QUIPS[character] || []), ...gen];
     groups.push({ w: 20, f: () => [null, { t: pick([...QUIPS_COMMON, ...own, ...own]), s: 'A', w: true }, null] });
-    if (character === 'deepseek') groups.push({ w: 4, f: () => ({ gif: true }) });
+    if (headpatFor(character)) groups.push({ w: 4, f: () => ({ gif: true }) });
     if (character === 'deepseek') groups.push({ w: 1, f: () => [null, { t: '哦鲸鲸... ', s: 'B' }, null] });
     let total = groups.reduce((a, g) => a + g.w, 0), r = Math.random() * total;
     for (const g of groups) { r -= g.w; if (r < 0) return g.f(); }
@@ -208,12 +238,12 @@
       lastBalance[key] = target;
     }
   }
-  function showBubble({ random = false } = {}) {
+  function showBubble({ random = false, headpat = false } = {}) {
     const ap = data.config.appearance; if (!ap.bubbleOn) return;
     if (bubbleMode === 'notice' || noticeQueue.length) { drainNotices(); return; }
     clearTimeout(bubbleTimer); bubble.classList.remove('notice');
-    pages = buildPages(); pageIdx = 0; bubbleMode = random ? 'random' : 'info';
-    if (random) setLines(randomLines()); else renderPage(false);
+    pages = buildPages(); pageIdx = 0; bubbleMode = random || headpat ? 'random' : 'info';
+    if (headpat) setLines({ gif: true }); else if (random) setLines(randomLines()); else renderPage(false);
     bubble.classList.add('open');
     armBubbleTimer();
   }
@@ -322,6 +352,9 @@
     const prevCharacter = character; data = d;
     const ap = d.config.appearance;
     const size = window.PetGeometry.windowSize(ap.scale);
+    if (turnAnimation && document.documentElement.style.getPropertyValue('--base') !== size.base + 'px') {
+      turnAnimation.cancel(); turnAnimation = null;
+    }
     document.documentElement.style.setProperty('--base', size.base + 'px');
     document.documentElement.style.setProperty('--pad', size.padding + 'px');
     root.classList.add('idle');
@@ -351,7 +384,7 @@
     const wait = (min > 0 ? min : 6) * 60000 * (0.7 + Math.random() * 0.8);
     setTimeout(() => { const a = data.config && data.config.appearance; if (a && a.quipsOn && Number(a.idleQuipMin) > 0 && !bubble.classList.contains('open') && !pressing) showBubble({ random: true }); idleLoop(); }, wait);
   })();
-  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds, c.restoreInfo); else if (c.name === 'bubble') showBubble(); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
+  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds, c.restoreInfo); else if (c.name === 'bubble') showBubble(); else if (c.name === 'headpat') showBubble({ headpat: true }); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
   window.addEventListener('resize', () => setTimeout(reportBox, 50));
   window.__dbgPages = () => ({ active: data.activeProviders, pages: buildPages().map((p) => p.lines.filter(Boolean).map((l) => l.t)) });
   window.pet.send('pet:ready');

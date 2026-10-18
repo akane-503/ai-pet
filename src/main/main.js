@@ -74,6 +74,7 @@ let quitting = false;
 function log(...a) { console.log(new Date().toISOString().slice(11, 19), ...a); }
 function winSizeForScale(scale) { return geometry.windowSize(scale); }
 let desktopAreas = new Map();
+let areaMotion = null;
 function areaFor(display) { return desktopAreas.get(display.id) || display.workArea; }
 function updateScreenAreas() {
   const displays = screen.getAllDisplays();
@@ -97,10 +98,10 @@ function updateScreenAreas() {
   if (sn.h === 'right') p.x = area.x + area.width - rect.width;
   if (sn.v === 'top') p.y = area.y;
   if (sn.v === 'bottom') p.y = area.y + area.height - rect.height;
-  clearInterval(animTimer);
-  movePet(p.x - petBox.x, p.y - petBox.y);
-  Object.assign(config.data.layout, { x: Math.round(p.x - petBox.x), y: Math.round(p.y - petBox.y) });
-  config.saveSoon();
+  const x = Math.round(p.x - petBox.x), y = Math.round(p.y - petBox.y);
+  animateTo(x, y, () => {
+    Object.assign(config.data.layout, { x, y }); config.saveSoon();
+  }, { desktopArea: true });
 }
 function enabledProviders() { return (config.data.providers || []).filter((p) => p && p.enabled); }
 function providerById(id) { return (config.data.providers || []).find((p) => p.id === id); }
@@ -386,12 +387,20 @@ function createPetWindow() {
 }
 
 function movePet(x, y) { if (!petWin) return; const { width, height } = winSizeForScale(config.data.appearance.scale); petWin.setBounds({ x: Math.round(x), y: Math.round(y), width, height }); }
+function stopAnimation() { clearInterval(animTimer); animTimer = null; areaMotion = null; }
 function displayFor(rect) { return screen.getDisplayNearestPoint({ x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }); }
 function petRect() { const b = petWin.getBounds(); return { x: b.x + petBox.x, y: b.y + petBox.y, width: petBox.w, height: petBox.h }; }
 function ensureOnScreen() {
   if (!petWin) return;
   const b = petWin.getBounds();
   const d = areaFor(displayFor(petRect()));
+  if (areaMotion) {
+    // Display-metrics events must not snap to the end halfway through a safe lift/drop.
+    const target = { x: areaMotion.x + petBox.x, y: areaMotion.y + petBox.y, width: petBox.w, height: petBox.h };
+    const safe = geometry.clampPosition(target, d);
+    if (safe.x === target.x && safe.y === target.y) return;
+    stopAnimation();
+  }
   const x = Math.min(Math.max(b.x, d.x - petBox.x), d.x + d.width - petBox.x - petBox.w);
   const y = Math.min(Math.max(b.y, d.y - petBox.y), d.y + d.height - petBox.y - petBox.h);
   if (x !== b.x || y !== b.y) movePet(x, y);
@@ -490,16 +499,17 @@ function computeSnap() {
   return { tx, ty, h, v, att, flip: h === 'left' ? true : h === 'right' ? false : flipped };
 }
 
-function animateTo(x, y, done) {
-  clearInterval(animTimer);
+function animateTo(x, y, done, opts = {}) {
+  stopAnimation();
   const b = petWin.getBounds();
-  const sx = b.x, sy = b.y, t0 = Date.now(), dur = 240;
+  const sx = b.x, sy = b.y, t0 = Date.now(), dur = opts.desktopArea ? 360 : 240;
   if (Math.abs(sx - x) < 2 && Math.abs(sy - y) < 2) { movePet(x, y); done && done(); return; }
+  if (opts.desktopArea) areaMotion = { x, y };
   animTimer = setInterval(() => {
     const t = Math.min(1, (Date.now() - t0) / dur);
-    const e = 1 - Math.pow(1 - t, 3); // ease-out，不过冲（过冲会让角色穿出屏幕边被裁掉）
+    const e = opts.desktopArea ? t * t * (3 - 2 * t) : 1 - Math.pow(1 - t, 3); // 缓入缓出，不过冲
     movePet(sx + (x - sx) * e, sy + (y - sy) * e);
-    if (t >= 1) { clearInterval(animTimer); done && done(); }
+    if (t >= 1) { stopAnimation(); done && done(); }
   }, 16);
 }
 
@@ -511,7 +521,7 @@ function settle() {
   // 以渲染层上报的实际朝向为准（petBox.flipped），避免两边状态错开
   const cur = typeof petBox.flipped === 'boolean' ? petBox.flipped : flipped;
   if (r.flip !== cur) {
-    // 渲染层会先把角色压扁再镜像并上报新框（pet:box 里带 flipped），那时再挪窗口 + 滑到目标；超时兜底
+    // 渲染层镜像后上报稳定边界（pet:box 里带 flipped），再挪窗口并滑到目标；超时兜底
     flipped = r.flip; pendingSettle = r;
     setTimeout(() => { if (pendingSettle === r) { pendingSettle = null; finishSettle(r); } }, 600);
     return;
@@ -533,7 +543,7 @@ function startAttachLoop() {
     if (!petWin || drag) return;
     const rect = winsnap.windowRect(attach.hwnd);
     if (!rect) {
-      attach = null; clearInterval(attachTimer); clearInterval(animTimer); pendingSettle = null;
+      attach = null; clearInterval(attachTimer); stopAnimation(); pendingSettle = null;
       // 工具关闭/最小化时保留当前朝向，避免无 flip 的消息把角色翻到窗口另一侧、挤出屏幕。
       flipped = !!petBox.flipped;
       sendPet('snap', { h: null, v: null, flip: flipped, attached: false });
@@ -572,6 +582,7 @@ function buildMenuTemplate() {
     { label: '🔄 刷新额度', click: () => refreshAll({ force: true, reason: 'menu' }) },
     { label: '💬 显示气泡', click: () => sendPet('cmd', { name: 'bubble' }) },
     { label: '🎲 随便说句话', click: () => sendPet('cmd', { name: 'random' }) },
+    { label: (currentCharacter || resolveCharacter()) === 'seed' && ap.headpatStyle !== 'gentle' ? '😂 奶龙大笑' : '✋ 摸摸头', click: () => sendPet('cmd', { name: 'headpat' }) },
     { label: '📨 消息记录', click: () => openSettings('notifications') },
     { type: 'separator' },
     { label: '🎭 角色', submenu: charItems },
@@ -686,7 +697,7 @@ ipcMain.on('pet:box', (e, box) => {
   }
 });
 ipcMain.on('mouse:ignore', (e, ignore) => { if (petWin) petWin.setIgnoreMouseEvents(!!ignore, { forward: true }); });
-ipcMain.on('drag:start', (e, pt) => { if (!petWin) return; clearInterval(animTimer); closePanel(); const b = petWin.getBounds(); drag = { sx: pt.x, sy: pt.y, wx: b.x, wy: b.y }; attach = null; pendingSettle = null; clearInterval(attachTimer); });
+ipcMain.on('drag:start', (e, pt) => { if (!petWin) return; stopAnimation(); closePanel(); const b = petWin.getBounds(); drag = { sx: pt.x, sy: pt.y, wx: b.x, wy: b.y }; attach = null; pendingSettle = null; clearInterval(attachTimer); });
 ipcMain.on('drag:move', (e, pt) => { if (!petWin || !drag) return; movePet(drag.wx + pt.x - drag.sx, drag.wy + pt.y - drag.sy); });
 ipcMain.on('drag:end', () => { if (!petWin) return; drag = null; settle(); });
 ipcMain.on('context-menu', () => { if (petWin) Menu.buildFromTemplate(buildMenuTemplate()).popup({ window: petWin }); });
@@ -710,7 +721,7 @@ ipcMain.on('notifications:clear', () => { state.data.notifications = []; state.s
 ipcMain.on('resnap', () => settle());
 ipcMain.on('pet:recover', () => {
   if (!petWin) return;
-  clearInterval(animTimer); clearInterval(attachTimer); attach = null; pendingSettle = null; drag = null;
+  stopAnimation(); clearInterval(attachTimer); attach = null; pendingSettle = null; drag = null;
   const wa = areaFor(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()));
   config.data.layout.snapped = { h: 'right', v: 'bottom' };
   movePet(wa.x + wa.width - petBox.x - petBox.w, wa.y + wa.height - petBox.y - petBox.h);
