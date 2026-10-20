@@ -83,7 +83,8 @@
       const time = s.at ? new Date(s.at).toLocaleString() : '时间未知';
       if (!s.ok && !s.stale) { out.textContent = '获取失败：' + (s.error || '无数据'); return; }
       const fmt = (n) => Number.isFinite(n) ? (s.currency === 'CNY' ? '¥' : s.currency === 'USD' ? '$' : '') + n.toFixed(2) : '未知';
-      const value = s.extra && s.extra.unlimited ? '令牌不限额 · 累计已用 ' + fmt(s.extra.used) + ' · 账户余额未知'
+      const relay = window.PetUsage.isRelay(p) ? window.PetUsage.relayMetric(s, data.ledgers && data.ledgers[p.id]) : null;
+      const value = relay ? relay.label + ' ' + fmt(relay.value) + ' · ' + relay.hint
         : s.balance != null ? '余额 ' + fmt(s.balance) + (s.granted != null ? ' · 其中赠送 ' + fmt(s.granted) : '')
         : (s.windows || []).map((w) => `${w.label} 已用 ${Math.round(w.usedPercent)}%`).join(' · ');
       out.textContent = value + ' · ' + (s.stale ? '刷新失败，保留最近值' : s.source === 'session-log' ? '本地会话记录' : '接口查询') + ' · ' + time;

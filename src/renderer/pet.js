@@ -16,16 +16,16 @@
   let lastBalance = {}, readingBubble = false;
   let gifTimer = null, refreshClickTimer = null;
 
-  const QUIPS_COMMON = ['不知道用户有什么用，先赶走吧~', '我...我...我也要挣钱吗？', '我去吃饭啦，测完叫我', '坏了...用户彻底怒了！', '真当我是便宜货啊...', '恭喜你实现token自由！token全跑了！', '上下文又满了，要不要压缩一下？', '你已经连续工作很久了，起来喝口水', '今天的 bug 都是昨天的我写的', '用户：能不能再快点？我：能不能再加点钱？'];
+  const QUIPS_COMMON = ['老实赚钱，很枯燥吧', '不知道用户有什么用，先赶走吧~', '我...我...我也要挣钱吗？', '我去吃饭啦，测完叫我', '坏了...用户彻底怒了！', '真当我是便宜货啊...', '恭喜你实现token自由！token全跑了！', '上下文又满了，要不要压缩一下？', '你已经连续工作很久了，起来喝口水', '今天的 bug 都是昨天的我写的', '用户：能不能再快点？我：能不能再加点钱？'];
   const QUIPS = {
-    deepseek: ['压力一只蓝色大肥鱼？！', '你目录里的dsh是什么...大烧货吗...?', '哦鲸鲸... ', '好模型... ↓', '好女孩...↓', 'DeepSleep...', '吃白饭的蓝色大肥鱼，不许说我', '缓存命中了，今天省下一顿饭钱', '服务器繁忙，请稍后再试（我在摸鱼）', '谷价时段不用我，你是不是傻', '幻方量化家的大小姐，只吃白饭', '我不是虎鲸，我是蓝色大肥鱼！'],
-    codex: ['5 小时窗口…又要满了吗', '龙娘不吃白饭，龙娘吃 token', '等重置的时候去喝杯茶吧', '好模型... ↓', 'OpenAI 家的大小姐，身价六万亿', '硅谷豪门家的顶流千金，不接受降智', 'image 2.5 什么时候来啊？', 'Plus 用户的悲哀：看着进度条发呆', '黑屏了？那是我在思考人生', '我的推理很深，你的额度很浅'],
-    claude: ['先想清楚再动手~', '上下文太长啦，压缩一下？', '不吃压力之人', '硅谷理工学霸家的优雅千金', 'SOTA 的威严不容置疑', '我不是不会，我是在深度思考', '最贵之人，但物有所值（吧）', '让我先读一遍所有文件……全部', '可惜没个好爹，A 社又涨价了', '你说的对，但是我要先写个 TODO'],
+    deepseek: ['老实写代码，很枯燥吧', '压力一只蓝色大肥鱼？！', '你目录里的dsh是什么...大烧货吗...?', '哦鲸鲸... ', '好模型... ↓', '好女孩...↓', 'DeepSleep...', '吃白饭的蓝色大肥鱼，不许说我', '缓存命中了，今天省下一顿饭钱', '服务器繁忙，请稍后再试（我在摸鱼）', '谷价时段不用我，你是不是傻', '幻方量化家的大小姐，只吃白饭', '我不是虎鲸，我是蓝色大肥鱼！'],
+    codex: ['老实用降智模型，很枯燥吧？', '5 小时窗口…又要满了吗', '龙娘不吃白饭，龙娘吃 token', '等重置的时候去喝杯茶吧', '好模型... ↓', 'OpenAI 家的大小姐，身价六万亿', '硅谷豪门家的顶流千金，不接受降智', 'image 2.5 什么时候来啊？', 'Plus 用户的悲哀：看着进度条发呆', '黑屏了？那是我在思考人生', '我的推理很深，你的额度很浅'],
+    claude: ['老实遵守地区限制，很枯燥吧？', '先想清楚再动手~', '上下文太长啦，压缩一下？', '不吃压力之人', '硅谷理工学霸家的优雅千金', 'SOTA 的威严不容置疑', '我不是不会，我是在深度思考', '最贵之人，但物有所值（吧）', '让我先读一遍所有文件……全部', '可惜没个好爹，A 社又涨价了', '你说的对，但是我要先写个 TODO'],
     zcode: ['送 token 的日子就是好日子！', 'A0 图纸拿好了', '蒙着眼也能跑通本地部署', '国产开源基建狂魔上线', '5 小时额度还剩多少？', '曾经的国模一姐，现在也是', '踩坑无数也帮你跑通本地部署', '信任补丁已打，请放心使用', '每日积分用完了，明天再来嘛', '打响国模与御三家正面对决的领头羊'],
-    gemini: ['哈基米~', '故障机器猫，喵', '美国豆包在线', '当代最强御三家之一（自封）', '世界知识和多模态是独一档，不接受反驳', '在酒馆疯狂截断哈气', '用户说啥都是你对，喵', '极其极其极其极其极其', 'Google 家的猫，谷歌一下你就知道'],
+    gemini: ['你叫谁北美豆包？', '哈基米~', '故障机器猫，喵', '美国豆包在线', '当代最强御三家之一（自封）', '世界知识和多模态是独一档，不接受反驳', '在酒馆疯狂截断哈气', '用户说啥都是你对，喵', '极其极其极其极其极其', 'Google 家的猫，谷歌一下你就知道'],
     qwen: ['六边形战士，什么都会一点', '开源界的劳模，遍地都是二创后代', '阿里家的元气大小姐', '千问千问，你问一千个我也答', '开源！开源！开源！'],
     kimi: ['百万字长文轻松通读', '国模一姐~', '月之暗面家的月光大小姐', '依靠 2.8T 参数力大砖飞', 'kimi 有点累了 kimi 有点累了', '免费用户？排队去'],
-    grok: ['马斯克家的毒舌千金', '@grok is it true？', '真正支持你做 R18 的人', '背靠 X 平台和 SpaceX，谁怕谁', '金发黄毛雌小鬼，嘴臭但好用', '你这个问题很蠢，但我还是回答一下'],
+    grok: ['老实看全年龄，很枯燥吧？', '马斯克家的毒舌千金', '@grok is it true？', '真正支持你做 R18 的人', '背靠 X 平台和 SpaceX，谁怕谁', '金发黄毛雌小鬼，嘴臭但好用', '你这个问题很蠢，但我还是回答一下'],
     seed: ['奶包在线~', '那你去找豆包啊！', '豆包是好女孩吗？', '省流：奶包', '劲爆尾杀！', '字节家的，免费但会记住你', '豆包：我是村姑？姐是御姐！'],
   };
   const PEAK_TEXT = { default: ['高峰时段', '空闲时段'], liang: ['梁文峰', '梁文谷'], strong: ['!?峰峰?!', '!?谷谷?!'] };
@@ -193,9 +193,9 @@
       const s = data.snapshots[p.id]; if (!s) continue;
       const led = data.ledgers[p.id];
       if (!s.ok && !s.stale) { out.push({ pid: p.id, lines: [{ t: shortName(p), s: 'A' }, { t: '获取失败', s: 'S', c: '#e0433f' }, { t: (s.error || '').slice(0, 24), s: 'C' }] }); continue; }
-      if (s.extra && s.extra.unlimited) {
-        const t = fmtMoney(s.extra.used, 'USD');
-        out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 累计', s: 'A' }, { t, s: amountStyle(t), roll: s.extra.used, cur: 'USD' }, { t: '令牌不限额 · 账户余额未知', s: 'C', w: true }] });
+      if (window.PetUsage.isRelay(p)) {
+        const metric = window.PetUsage.relayMetric(s, led), t = fmtMoney(metric.value, metric.currency);
+        out.push({ pid: p.id, lines: [{ t: shortName(p) + ' ' + metric.label, s: 'A', w: true }, { t, s: amountStyle(t), roll: Number.isFinite(metric.value) ? metric.value : undefined, cur: metric.currency }, { t: s.stale ? '刷新失败，沿用最近值' : metric.hint, s: 'C', w: true }] });
       } else if (s.balance !== null && s.balance !== undefined) {
         const t = fmtMoney(s.balance, s.currency);
         out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 余额', s: 'A' }, { t, s: amountStyle(t), roll: s.balance, cur: s.currency }, { t: s.stale ? '刷新失败，沿用最近值' : (led && Number.isFinite(led.todayUsage) ? '今日已用 ' + fmtMoney(led.todayUsage, s.currency) : ''), s: 'C' }] });
@@ -206,7 +206,7 @@
         }
       }
       if (Number.isFinite(s.granted)) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 赠送余额', s: 'A' }, { t: fmtMoney(s.granted, s.currency), s: 'P' }, { t: Number.isFinite(s.toppedUp) ? '充值余额 ' + fmtMoney(s.toppedUp, s.currency) : '', s: 'C' }] });
-      if (Number.isFinite(s.extra && s.extra.total) && !s.extra.unlimited) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 令牌额度', s: 'A' }, { t: fmtMoney(s.extra.total, s.currency), s: 'P' }, { t: Number.isFinite(s.extra.used) ? '累计已用 ' + fmtMoney(s.extra.used, s.currency) : '', s: 'C' }] });
+      if (!window.PetUsage.isRelay(p) && Number.isFinite(s.extra && s.extra.total) && !s.extra.unlimited) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 令牌额度', s: 'A' }, { t: fmtMoney(s.extra.total, s.currency), s: 'P' }, { t: Number.isFinite(s.extra.used) ? '累计已用 ' + fmtMoney(s.extra.used, s.currency) : '', s: 'C' }] });
       const updated = s.at;
       if (s.stale || s.source === 'session-log') out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 数据来源', s: 'A' }, { t: s.stale ? '刷新失败，沿用最近值' : '本地会话记录', s: 'S', w: true }, { t: updated ? new Date(updated).toLocaleTimeString() + ' 记录' : '时间未知', s: 'C' }] });
       // DeepSeek（DSH 模式）：额度后面紧跟峰谷时段页

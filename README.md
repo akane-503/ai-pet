@@ -77,7 +77,7 @@ Claude 目录留空时自动使用本机目录和 cc-switch 指定的 WSL 目录
 |---|---|---|
 | DeepSeek | `api.deepseek.com/user/balance`、`/models` | 余额、赠送余额、今日已用（余额差值记账）、模型上新 |
 | Codex / ChatGPT | `chatgpt.com/backend-api/wham/usage` | 用 `~/.codex/auth.json` 登录态；失败时回退到本地会话日志里的 `rate_limits`；模型上新看 `models_cache.json` |
-| 中转站 new-api/one-api | `/v1/dashboard/billing/subscription`+`usage` 或 `/api/user/self` | 令牌不限额时只显示累计/今日用量，填“系统访问令牌+用户ID”可看账户余额；公告来自 `/api/status`、`/api/notice` |
+| 中转站 new-api/one-api | `/v1/dashboard/billing/subscription`+`usage` 或 `/api/user/self` | 优先显示余额；无限额令牌改为今日已用（从桌宠当天的观测起统计），不显示累计消耗。填“系统访问令牌+用户ID”可看账户余额；公告来自 `/api/status`、`/api/notice` |
 | 智谱 GLM / Z.ai | `/api/monitor/usage/quota/limit` | 5 小时 token 额度、MCP 月额度、重置倒计时 |
 | Claude 订阅 | `api.anthropic.com/api/oauth/usage` | 需要 Claude Code 登录凭据 `.credentials.json` |
 
