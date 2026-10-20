@@ -40,18 +40,30 @@ const CHARACTERS = [
   { id: 'grok', name: 'Grok 娘 · xAI', keys: ['grok', 'xai'], colors: ['#6f4b35', '#957045', '#a28c74'] },
   { id: 'seed', name: '豆包（经典）', keys: ['doubao', 'seed', 'volc'], colors: ['#4a3732', '#795c52', '#a18a7d'] },
 ];
+function agents() { return (config.data.agents || []).filter((a) => a && a.id && !CHARACTERS.some((c) => c.id === a.id)); }
+function allCharacters() {
+  return [...CHARACTERS, ...agents().map((a) => ({ id: a.id, name: a.name || a.id, keys: [a.id], look: a.look, colors: (CHARACTERS.find((c) => c.id === a.look) || CHARACTERS[0]).colors }))];
+}
+function agentLaunch() { return Object.fromEntries(agents().map((a) => [a.id, launcher.agentSpec(a)]).filter(([, v]) => v)); }
+function launchCfg() { return { ...agentLaunch(), ...config.data.launch }; }
 let recent = { character: null, at: 0, reason: '' };   // 最近一次“打开/聚焦”的 agent
 let foreground = { character: null, at: 0 };           // 当前前台窗口对应的 agent
 let knownAgentWins = null;                              // 上次看到的 agent 窗口 hwnd -> 角色
 function charOf(key) {
   const p = enabledProviders().find((x) => x.type === key || (key === 'zcode' && x.type === 'zhipu'));
   if (p && p.character) return p.character;
-  const c = CHARACTERS.find((x) => x.keys.includes(key) || x.id === key);
+  const c = allCharacters().find((x) => x.keys.includes(key) || x.id === key);
   return c ? c.id : null;
 }
 function characterImages() {
   const out = {};
   try { for (const f of fs.readdirSync(path.join(ASSETS, 'characters'))) { const m = /^([a-z0-9_-]+)\.(png|webp|gif)$/i.exec(f); if (m) out[m[1]] = path.join(ASSETS, 'characters', f).replace(/\\/g, '/'); } } catch (_) { /* */ }
+  // 自定义 agent 没有立绘就借 look 角色的（含摸头动图）
+  for (const a of agents()) {
+    if (a.image && fs.existsSync(a.image)) out[a.id] = String(a.image).replace(/\\/g, '/');
+    const lookImg = { '': out[a.look] || out[a.look + '-classic'], 'rub-': out[a.look === 'seed' ? 'nailong-seed' : 'rub-' + a.look], 'headpat-': out['headpat-' + a.look] };
+    for (const [pre, src] of Object.entries(lookImg)) if (!out[pre + a.id] && src) out[pre + a.id] = src;
+  }
   for (const [id, fp] of Object.entries((config.data.appearance && config.data.appearance.customImages) || {})) { if (fp && fs.existsSync(fp)) out[id] = String(fp).replace(/\\/g, '/'); }
   return out;
 }
@@ -114,7 +126,7 @@ function activeProviderIds() {
   const det = Object.entries((lastActivity && lastActivity.details) || {}).filter(([, t]) => now - t < windowMs).sort((a, b) => b[1] - a[1]);
   const ps = enabledProviders(); const out = [];
   const add = (p) => { if (p && !out.includes(p.id)) out.push(p.id); };
-  const forChar = (c) => { if (c === 'deepseek') ps.filter((p) => p.type === 'deepseek').forEach(add); else if (c === 'codex') ps.filter((p) => p.type === 'codex').forEach(add); else if (c === 'zcode') ps.filter((p) => p.type === 'zhipu').forEach(add); else if (c === 'claude') ps.filter((p) => p.type === 'claude-oauth' || p.type === 'newapi' || p.type === 'openai').forEach(add); };
+  const forChar = (c) => { if (c === 'deepseek') ps.filter((p) => p.type === 'deepseek').forEach(add); else if (c === 'codex') ps.filter((p) => p.type === 'codex').forEach(add); else if (c === 'zcode') ps.filter((p) => p.type === 'zhipu').forEach(add); else if (c === 'claude') ps.filter((p) => p.type === 'claude-oauth' || p.type === 'newapi' || p.type === 'openai').forEach(add); else ps.filter((p) => p.character === c).forEach(add); };
   // 当前角色对应的排最前，然后是最近打开的，再是窗口期内活跃的
   const cur = currentCharacter || resolveCharacter();
   forChar(cur);
@@ -158,7 +170,7 @@ function whyCharacter() { return characterSelection().why; }
 function checkWindows() {
   try {
     const fg = winsnap.foregroundWindow();
-    const fgc = activity.routeForWindow(fg, config.data.activity, config.data.providers);
+    const fgc = activity.routeForWindow(fg, config.data.activity, config.data.providers, agents());
     if (fgc && fg.hwnd !== ownHwnd()) {
       const c = charOf(fgc) || fgc;
       foreground = { character: c, at: Date.now() };
@@ -166,7 +178,7 @@ function checkWindows() {
     } else foreground = { character: null, at: 0 };
     const wins = winsnap.titledWindows();
     const agentWins = new Map();
-    for (const w of wins) { const c = activity.routeForWindow(w, config.data.activity, config.data.providers); if (c && !w.iconic) agentWins.set(w.hwnd, charOf(c) || c); }
+    for (const w of wins) { const c = activity.routeForWindow(w, config.data.activity, config.data.providers, agents()); if (c && !w.iconic) agentWins.set(w.hwnd, charOf(c) || c); }
     if (knownAgentWins) {
       // 同一个终端/浏览器也可能切工具。Z 序中最前的新工具优先。
       for (const [h, c] of agentWins) if (knownAgentWins.get(h) !== c) { recent = { character: c, at: Date.now(), reason: 'launch' }; log('agent window appeared ->', c); break; }
@@ -187,9 +199,9 @@ function pushData() {
   if (character !== currentCharacter) { currentCharacter = character; updateTrayMenu(); }
   const payload = {
     snapshots: state.data.snapshots, ledgers: state.data.ledgers, config: publicConfig(), activity: lastActivity, character,
-    characters: CHARACTERS, characterImages: characterImages(), notifications: state.data.notifications.slice(0, 50), maxBalanceSeen: state.data.maxBalanceSeen,
-    snapAvailable: winsnap.available(), refreshing, launchLabel: (launcher.resolve(character, config.data.launch) || {}).label || null,
-    colors: (CHARACTERS.find((c) => c.id === character) || CHARACTERS[0]).colors, why: whyCharacter(), activeProviders: activeProviderIds(),
+    characters: allCharacters(), characterImages: characterImages(), notifications: state.data.notifications.slice(0, 50), maxBalanceSeen: state.data.maxBalanceSeen,
+    snapAvailable: winsnap.available(), refreshing, launchLabel: (launcher.resolve(character, launchCfg()) || {}).label || null,
+    colors: (allCharacters().find((c) => c.id === character) || CHARACTERS[0]).colors, why: whyCharacter(), activeProviders: activeProviderIds(),
     quips: (state.data.quips && state.data.quips.byCharacter) || {},
   };
   sendPet('data', payload);
@@ -324,7 +336,7 @@ function scheduleRefresh() {
 
 function checkActivity() {
   try {
-    const a = activity.detect(config.data.activity, config.data.providers || []);
+    const a = activity.detect(config.data.activity, config.data.providers || [], agents());
     const changed = a.active !== lastActivity.active;
     lastActivity = a;
     if (a.active) { state.data.lastActive = a.active; state.data.lastActiveAt = a.at; }
@@ -574,15 +586,15 @@ function buildMenuTemplate() {
   const ap = config.data.appearance;
   const unread = state.data.notifications.filter((n) => !n.read).length;
   const charItems = [{ label: '自动（跟随当前 agent）', type: 'radio', checked: ap.character === 'auto', click: () => setAppearance({ character: 'auto' }) },
-    ...CHARACTERS.map((c) => ({ label: c.name, type: 'radio', checked: ap.character === c.id, click: () => setAppearance({ character: c.id }) }))];
+    ...allCharacters().map((c) => ({ label: c.name, type: 'radio', checked: ap.character === c.id, click: () => setAppearance({ character: c.id }) }))];
   return [
-    { label: `🚀 打开 ${(launcher.resolve(currentCharacter || resolveCharacter(), config.data.launch) || {}).label || '对应工具'}`, click: () => launchCurrent() },
-    { label: '🚀 打开其他…', submenu: CHARACTERS.map((c) => { const sp = launcher.resolve(c.id, config.data.launch); return { label: `${c.name}${sp ? ' → ' + sp.label : ''}`, enabled: !!sp, click: () => launchFor(c.id) }; }) },
+    { label: `🚀 打开 ${(launcher.resolve(currentCharacter || resolveCharacter(), launchCfg()) || {}).label || '对应工具'}`, click: () => launchCurrent() },
+    { label: '🚀 打开其他…', submenu: allCharacters().map((c) => { const sp = launcher.resolve(c.id, launchCfg()); return { label: `${c.name}${sp ? ' → ' + sp.label : ''}`, enabled: !!sp, click: () => launchFor(c.id) }; }) },
     { type: 'separator' },
     { label: '🔄 刷新额度', click: () => refreshAll({ force: true, reason: 'menu' }) },
     { label: '💬 显示气泡', click: () => sendPet('cmd', { name: 'bubble' }) },
     { label: '🎲 随便说句话', click: () => sendPet('cmd', { name: 'random' }) },
-    { label: (currentCharacter || resolveCharacter()) === 'seed' && ap.headpatStyle !== 'gentle' ? '😂 奶龙大笑' : '✋ 摸摸头', click: () => sendPet('cmd', { name: 'headpat' }) },
+    { label: '✋ 摸摸头', click: () => sendPet('cmd', { name: 'headpat' }) },
     { label: '📨 消息记录', click: () => openSettings('notifications') },
     { type: 'separator' },
     { label: '🎭 角色', submenu: charItems },
@@ -615,7 +627,7 @@ function createTray() {
 }
 
 async function launchFor(characterId) {
-  const r = await launcher.launch(characterId, config.data.launch);
+  const r = await launcher.launch(characterId, launchCfg());
   if (r.ok) { recent = { character: characterId, at: Date.now(), reason: 'launch' }; pushData(); }
   log('launch', characterId, r);
   sendPet('cmd', { name: 'say', seconds: r.ok ? 1.2 : 3, restoreInfo: true, lines: [{ t: r.ok ? (r.already ? '已经开着啦~' : '出发！') : '打不开...', s: 'P', c: r.ok ? '' : '#e0433f' }, { t: r.message, s: 'C', w: true }] });
@@ -708,7 +720,7 @@ ipcMain.on('panel:ready', () => pushData());
 ipcMain.on('cmd:pet', (e, c) => sendPet('cmd', c));
 ipcMain.on('open-settings', (e, tab) => openSettings(tab));
 ipcMain.on('launch', (e, id) => (id ? launchFor(id) : launchCurrent()));
-ipcMain.handle('launch:defaults', () => launcher.defaults());
+ipcMain.handle('launch:defaults', () => ({ ...launcher.defaults(), ...agentLaunch() }));
 ipcMain.handle('quips:generate', () => refreshQuips({ force: true }));
 ipcMain.handle('quips:state', () => ({ updatedAt: (state.data.quips || {}).updatedAt || 0, lastError: (state.data.quips || {}).lastError || null, counts: Object.fromEntries(Object.entries((state.data.quips || {}).byCharacter || {}).map(([k, v]) => [k, v.length])), hasKey: !!quipsKey() }));
 ipcMain.on('open-external', (e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
@@ -739,13 +751,14 @@ ipcMain.handle('config:set', (e, next) => {
   if (!config.save()) throw new Error('设置未能写入，请检查本机文件是否可写');
   if (next.autostart !== undefined) setAutostart(next.autostart);
   if (next.refresh) scheduleRefresh();
+  if (next.agents) updateTrayMenu();
   if (next.providers) refreshAll({ force: true, reason: 'config' });
   else pushData();
   return config.data;
 });
 ipcMain.handle('provider:test', async (e, p) => providers.fetchSnapshot(p, { wantModels: true }));
 ipcMain.handle('importers:scan', async () => importers.scan());
-ipcMain.handle('meta', () => ({ types: providers.TYPE_META, characters: CHARACTERS, characterImages: characterImages(), userData, root: ROOT, snapAvailable: winsnap.available(), version: app.getVersion(), electron: process.versions.electron }));
+ipcMain.handle('meta', () => ({ types: providers.TYPE_META, characters: allCharacters(), characterImages: characterImages(), userData, root: ROOT, snapAvailable: winsnap.available(), version: app.getVersion(), electron: process.versions.electron }));
 ipcMain.handle('state:get', () => state.data);
 ipcMain.handle('notifications:list', () => state.data.notifications);
 ipcMain.handle('pick-file', async () => { const r = await dialog.showOpenDialog({ properties: ['openFile', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });

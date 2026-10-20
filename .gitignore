@@ -15,3 +15,4 @@ scripts/debug-*.js
 scripts/test-koffi.js
 scripts/screenshot.ps1
 shot.png
+.claude/

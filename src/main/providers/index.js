@@ -6,6 +6,8 @@ const impls = {
   openai: require('./newapi'),
   zhipu: require('./zhipu'),
   'claude-oauth': require('./claude-oauth'),
+  cursor: require('./cursor'),
+  custom: require('./custom'),
 };
 
 const TYPE_META = {
@@ -14,6 +16,8 @@ const TYPE_META = {
   newapi: { label: '中转站 (new-api / one-api)', fields: ['baseUrl', 'apiKey', 'accessToken', 'userId', 'lowBalance', 'announcements'], kind: 'balance', defaultCharacter: 'claude' },
   zhipu: { label: '智谱 GLM / Z.ai Coding Plan', fields: ['baseUrl', 'apiKey', 'warnPercent'], kind: 'window', defaultCharacter: 'zcode' },
   'claude-oauth': { label: 'Claude 订阅 (Claude Code 登录)', fields: ['credentialsPath', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
+  cursor: { label: 'Cursor 订阅（读本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'cursor' },
+  custom: { label: '自定义 JSON 接口', fields: ['baseUrl', 'apiKey', 'balancePath', 'usedPath', 'limitPath', 'currency', 'warnPercent'], kind: 'window', defaultCharacter: 'deepseek' },
 };
 
 async function fetchSnapshot(provider, ctx) {
