@@ -589,13 +589,13 @@ function buildMenuTemplate() {
     ...allCharacters().map((c) => ({ label: c.name, type: 'radio', checked: ap.character === c.id, click: () => setAppearance({ character: c.id }) }))];
   return [
     { label: `🚀 打开 ${(launcher.resolve(currentCharacter || resolveCharacter(), launchCfg()) || {}).label || '对应工具'}`, click: () => launchCurrent() },
-    { label: '🚀 打开其他…', submenu: allCharacters().map((c) => { const sp = launcher.resolve(c.id, launchCfg()); return { label: `${c.name}${sp ? ' → ' + sp.label : ''}`, enabled: !!sp, click: () => launchFor(c.id) }; }) },
+    { label: '🚀 打开其他…', submenu: allCharacters().map((c) => [c, launcher.resolve(c.id, launchCfg())]).filter(([, sp]) => sp).map(([c, sp]) => ({ label: sp.label, click: () => launchFor(c.id) })) },
     { type: 'separator' },
     { label: '🔄 刷新额度', click: () => refreshAll({ force: true, reason: 'menu' }) },
     { label: '💬 显示气泡', click: () => sendPet('cmd', { name: 'bubble' }) },
     { label: '🎲 随便说句话', click: () => sendPet('cmd', { name: 'random' }) },
     { label: '✋ 摸摸头', click: () => sendPet('cmd', { name: 'headpat' }) },
-    { label: '📨 消息记录', click: () => openSettings('notifications') },
+    { label: `📨 消息记录${unread ? `（${unread} 条未读）` : ''}`, click: () => openSettings('notifications') },
     { type: 'separator' },
     { label: '🎭 角色', submenu: charItems },
     { label: '📐 大小', submenu: [0.7, 0.85, 1, 1.2, 1.5, 1.8, 2.2].map((s) => ({ label: `${Math.round(s * 100)}%`, type: 'radio', checked: Math.abs(ap.scale - s) < 0.01, click: () => setAppearance({ scale: s }) })) },
@@ -612,6 +612,16 @@ function buildMenuTemplate() {
     { label: '⚙️ 设置…', click: () => openSettings('providers') },
     { label: petWin && petWin.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => { if (!petWin) return; petWin.isVisible() ? petWin.hide() : petWin.show(); updateTrayMenu(); } },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
+  ];
+}
+// 宠物右键只放快捷动作；外观 / 开关在右上角面板，完整列表留给托盘
+function petMenuTemplate() {
+  const all = buildMenuTemplate();
+  return [
+    ...all.slice(0, 2),
+    { type: 'separator' },
+    ...all.slice(6, 8), // 摸头 / 消息
+    { label: '隐藏桌宠（托盘图标可唤回）', click: () => { if (petWin) { petWin.hide(); updateTrayMenu(); } } },
   ];
 }
 function updateTrayMenu() { if (tray) tray.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate())); }
@@ -712,7 +722,7 @@ ipcMain.on('mouse:ignore', (e, ignore) => { if (petWin) petWin.setIgnoreMouseEve
 ipcMain.on('drag:start', (e, pt) => { if (!petWin) return; stopAnimation(); closePanel(); const b = petWin.getBounds(); drag = { sx: pt.x, sy: pt.y, wx: b.x, wy: b.y }; attach = null; pendingSettle = null; clearInterval(attachTimer); });
 ipcMain.on('drag:move', (e, pt) => { if (!petWin || !drag) return; movePet(drag.wx + pt.x - drag.sx, drag.wy + pt.y - drag.sy); });
 ipcMain.on('drag:end', () => { if (!petWin) return; drag = null; settle(); });
-ipcMain.on('context-menu', () => { if (petWin) Menu.buildFromTemplate(buildMenuTemplate()).popup({ window: petWin }); });
+ipcMain.on('context-menu', () => { if (petWin) Menu.buildFromTemplate(petMenuTemplate()).popup({ window: petWin }); });
 ipcMain.on('panel:toggle', () => togglePanel());
 ipcMain.on('panel:close', () => closePanel());
 ipcMain.on('panel:size', (e, { h }) => { if (!panelWin || panelWin.isDestroyed()) return; const b = panelWin.getBounds(); if (panelShown && Math.abs(b.height - h) < 2) return; showPanelAt(h); });
