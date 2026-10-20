@@ -32,11 +32,46 @@ function defaults() {
   };
 }
 
-// 自定义 agent 的默认启动：显式 target > 常见安装目录里的同名 exe > 网址
+const exeNames = (a) => String(a.process || '').split('|').map((x) => x.trim()).filter(Boolean);
+const found = {}; // exe 小写名 -> 搜到的完整路径
+const tried = new Set(); // 本次运行已搜过的名字，搜不到也不重复跑
+let pending = Promise.resolve(found); // 正在跑的搜索，后来的调用等它结束
+
+// 一次 PowerShell 找 exe：正在运行的进程 > 卸载注册表 > App Paths > 开始菜单/桌面快捷方式 > 各盘两层目录
+const FIND_PS = `[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$names=@(__NAMES__); $hits=@{}
+function Add($p){ if(!$p){return}; $p=($p -replace ',-?\\d+$','').Trim().Trim('"'); $n=[IO.Path]::GetFileName($p).ToLower()
+  if($names -contains $n -and !$hits[$n] -and (Test-Path -LiteralPath $p)){ $hits[$n]=$p } }
+Get-Process -EA 0 | % { Add $_.Path }
+$u='Software\\Microsoft\\Windows\\CurrentVersion'
+Get-ItemProperty "HKCU:\\$u\\Uninstall\\*","HKLM:\\$u\\Uninstall\\*","HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*" -EA 0 | % {
+  Add $_.DisplayIcon; $l=$_.InstallLocation; if($l){ foreach($n in $names){ Add (Join-Path $l.Trim('"') $n) } } }
+Get-ItemProperty "HKCU:\\$u\\App Paths\\*","HKLM:\\$u\\App Paths\\*" -EA 0 | % { Add $_.'(default)' }
+$sh=New-Object -ComObject WScript.Shell
+Get-ChildItem "$env:APPDATA\\Microsoft\\Windows\\Start Menu","$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:USERPROFILE\\Desktop","$env:PUBLIC\\Desktop" -Recurse -Filter *.lnk -EA 0 | % { Add $sh.CreateShortcut($_.FullName).TargetPath }
+foreach($n in $names){ if(!$hits[$n]){ foreach($d in (Get-PSDrive -PSProvider FileSystem).Root){ Resolve-Path "$d*\\$n","$d*\\*\\$n" -EA 0 | % { Add $_.Path } } } }
+$hits | ConvertTo-Json -Compress`;
+
+// 后台搜一次，结果进 found；agentSpec 同步读缓存
+function discover(agents) {
+  const names = [...new Set(agents.flatMap(exeNames).map((x) => x.toLowerCase()))].filter((n) => !tried.has(n));
+  names.forEach((n) => tried.add(n));
+  if (!names.length || process.platform !== 'win32') return pending;
+  const script = FIND_PS.replace('__NAMES__', names.map((n) => `'${n.replace(/'/g, "''")}'`).join(','));
+  return (pending = pending.then(() => new Promise((done) => {
+    execFile('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 60000 }, (_e, out) => {
+      try { Object.assign(found, JSON.parse(String(out).trim() || '{}')); } catch (_) { /* 搜不到就保持网页回退 */ }
+      done(found);
+    });
+  })));
+}
+
+// 自定义 agent 的默认启动：显式 target > 搜到的 exe > 常见安装目录里的同名 exe > 网址
 function agentSpec(a) {
-  const exes = String(a.process || '').split('|').map((x) => x.trim()).filter(Boolean);
+  const exes = exeNames(a);
   const dirs = [path.join(HOME, 'AppData', 'Local', 'Programs'), process.env.ProgramFiles || 'C:\\Program Files'];
-  const target = a.target || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
+  const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists)
+    || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
   if (target) return { kind: 'app', label: a.name, target, process: path.basename(target), match: a.title || '', fallbackUrl: a.url || null };
   return a.url ? { kind: 'url', label: a.name + ' 网页', target: a.url } : null;
 }
@@ -120,4 +155,4 @@ async function launch(characterId, userLaunch) {
   } catch (e) { return { ok: false, message: e.message }; }
 }
 
-module.exports = { launch, resolve, defaults, isRunning, agentSpec };
+module.exports = { launch, resolve, defaults, isRunning, agentSpec, discover, FIND_PS };

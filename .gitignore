@@ -9,6 +9,8 @@ state.json*
 *.png.tmp
 dbg-*.png
 debug-*.png
+debug-*.err
+debug-*.log
 scripts/crawl/
 scripts/gen/
 scripts/debug-*.js

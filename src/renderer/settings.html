@@ -8,14 +8,14 @@
 </head>
 <body>
 <aside id="nav">
-  <div class="brand">🐳 AI 桌宠</div>
-  <a href="#providers" data-tab="providers">🔌 数据源</a>
-  <a href="#notify" data-tab="notify">🔔 通知</a>
-  <a href="#appearance" data-tab="appearance">🎭 外观</a>
-  <a href="#activity" data-tab="activity">🕵️ 活跃检测</a>
-  <a href="#launch" data-tab="launch">🚀 打开工具</a>
-  <a href="#notifications" data-tab="notifications">📨 消息中心 <span id="unread" class="pill hidden"></span></a>
-  <a href="#about" data-tab="about">ℹ️ 关于</a>
+  <div class="brand">AI 桌宠<small>额度 · 角色 · 提醒</small></div>
+  <a href="#providers" data-tab="providers">数据源</a>
+  <a href="#notify" data-tab="notify">通知</a>
+  <a href="#appearance" data-tab="appearance">外观</a>
+  <a href="#activity" data-tab="activity">活跃检测</a>
+  <a href="#launch" data-tab="launch">打开工具</a>
+  <a href="#notifications" data-tab="notifications">消息中心 <span id="unread" class="pill hidden"></span></a>
+  <a href="#about" data-tab="about">关于</a>
   <div class="nav-foot"><button id="save" class="primary">保存设置</button><div id="save-msg"></div></div>
 </aside>
 <main>
@@ -24,7 +24,7 @@
     <p class="hint">每个数据源对应一个额度来源。余额类（DeepSeek / 中转站）显示金额，窗口类（Codex / GLM / Claude 订阅）显示 5 小时 / 7 天用量。所有凭据只存在本机 <code id="userdata"></code>。</p>
     <div class="toolbar">
       <select id="add-type"></select><button id="add-provider">＋ 添加</button>
-      <button id="scan">🔍 扫描本机凭据</button>
+      <button id="scan">扫描本机凭据</button>
     </div>
     <div id="scan-result" class="card hidden"></div>
     <div id="providers"></div>
@@ -40,12 +40,12 @@
     </div>
     <div class="card">
       <h3>提醒内容</h3>
-      <label><input type="checkbox" data-n="resets"> ⏰ 额度窗口重置（Codex 5h/7d、GLM、Claude）</label>
-      <label><input type="checkbox" data-n="gifts"> 🎁 送额度 / 送 token / 提前重置 / 充值到账</label>
-      <label><input type="checkbox" data-n="lowBalance"> ⚠️ 余额不足 / 额度快用完</label>
-      <label><input type="checkbox" data-n="newModels"> 🆕 模型上新（对比各家 /models 列表与 Codex 模型缓存）</label>
-      <label><input type="checkbox" data-n="announcements"> 📣 中转站公告</label>
-      <label><input type="checkbox" data-n="rss"> 📰 RSS 资讯</label>
+      <label><input type="checkbox" data-n="resets"> 额度窗口重置（Codex 5h/7d、GLM、Claude）</label>
+      <label><input type="checkbox" data-n="gifts"> 送额度 / 送 token / 提前重置 / 充值到账</label>
+      <label><input type="checkbox" data-n="lowBalance"> 余额不足 / 额度快用完</label>
+      <label><input type="checkbox" data-n="newModels"> 模型上新（对比各家 /models 列表与 Codex 模型缓存）</label>
+      <label><input type="checkbox" data-n="announcements"> 中转站公告</label>
+      <label><input type="checkbox" data-n="rss"> RSS 资讯</label>
     </div>
     <div class="card">
       <h3>RSS / Atom 订阅（可选）</h3>
@@ -108,7 +108,7 @@
     </div>
     <div class="card"><button id="act-test">立即检测</button><pre id="act-result"></pre></div>
     <h2>自定义 Agent</h2>
-    <p class="hint">按进程名或窗口标题认出工具，桌宠就切过去；没有自己的立绘时借用一个内置角色。额度在「数据源」里加一个，对应角色选它。</p>
+    <p class="hint">按进程名或窗口标题认出工具，桌宠就切过去；没有自己的立绘时借用一个内置角色。额度在「数据源」里加一个，对应角色选它。启动路径不用填，会从运行中的进程、安装记录、快捷方式和各盘目录里自动找 exe，找不到才开网页。</p>
     <div id="agents"></div>
     <button id="add-agent">＋ 添加 Agent</button>
   </section>
