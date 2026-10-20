@@ -14,7 +14,10 @@
       const s = d.snapshots[p.id]; const led = d.ledgers[p.id];
       if (!s) { rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v stale">…</span></div>`); continue; }
       if (!s.ok && !s.stale) { rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v err" title="${esc(s.error)}">${esc((s.error || '失败').slice(0, 22))}</span></div>`); continue; }
-      if (s.extra && s.extra.unlimited) rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.stale ? ' stale' : ''}">已用 ${fmtMoney(s.extra.used, 'USD')}${led && led.todayUsage ? ` <span class="k">今 ${fmtMoney(led.todayUsage, 'USD')}</span>` : ''}</span></div>`);
+      if (window.PetUsage.isRelay(p)) {
+        const metric = window.PetUsage.relayMetric(s, led);
+        rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.stale ? ' stale' : ''}" title="${esc(metric.hint)}">${metric.label} ${fmtMoney(metric.value, metric.currency)}</span></div>`);
+      }
       else if (s.balance !== null && s.balance !== undefined) rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.stale ? ' stale' : ''}">${fmtMoney(s.balance, s.currency)}${led && led.todayUsage ? ` <span class="k">今 -${fmtMoney(led.todayUsage, s.currency)}</span>` : ''}</span></div>`);
       else for (const w of s.windows || []) rows.push(`<div class="row"><span class="k">${esc(p.name)} ${esc(w.label)}</span><span class="v${s.stale ? ' stale' : ''}" style="${w.usedPercent >= (Number(p.warnPercent) || 90) ? 'color:#e0433f' : ''}">${Math.round(w.usedPercent)}%${w.resetsAt ? ` <span class="k">${fmtLeft(w.resetsAt - Date.now() / 1000)}</span>` : ''}</span></div>`);
     }

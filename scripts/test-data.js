@@ -11,6 +11,27 @@ const { JsonStore, deepMerge } = require('../src/main/config');
 const { num, toEpochSec } = require('../src/main/providers/util');
 const { dueCharacters } = require('../src/main/quips');
 const activity = require('../src/main/activity');
+const { isRelay, relayMetric } = require('../src/shared/usage');
+
+test('relay displays balance first, including real zero, and never substitutes lifetime spend', () => {
+  assert.equal(isRelay({ type: 'newapi' }), true);
+  assert.equal(isRelay({ type: 'openai' }), true);
+  assert.equal(isRelay({ type: 'codex' }), false);
+  const metric = relayMetric({ balance: 0, currency: 'USD', extra: { unlimited: true, used: 999 } }, null);
+  assert.equal(metric.label, '余额'); assert.equal(metric.value, 0);
+  assert.equal(relayMetric({ balance: null, extra: { used: 999 }, todayUsage: 999 }, null).value, null);
+});
+
+test('relay daily spend is date and currency scoped and retains observed zero', () => {
+  const now = new Date(2026, 9, 20, 12);
+  const ledger = { date: '2026-10-20', todayUsage: 1.25, lastCurrency: 'USD#used' };
+  const s = { balance: null, currency: 'USD', extra: { unlimited: true, used: 999 } };
+  assert.equal(relayMetric(s, ledger, now).value, 1.25);
+  assert.equal(relayMetric(s, { ...ledger, todayUsage: 0 }, now).value, 0);
+  assert.equal(relayMetric(s, { ...ledger, date: '2026-10-19' }, now).value, null);
+  assert.equal(relayMetric(s, { ...ledger, lastCurrency: 'CNY' }, now).value, null);
+  assert.match(relayMetric(s, ledger, now).hint, /观测/);
+});
 
 function mockedModule(relative, mocks) {
   const file = path.resolve(__dirname, '..', relative);
@@ -47,6 +68,7 @@ test('unlimited relay tokens expose cumulative usage and leave account balance u
   const impl = mockedModule('src/main/providers/newapi.js', { '../http': httpMock(async (url) => response(url.includes('/subscription') ? { hard_limit_usd: 1e8 } : { total_usage: 500 })) });
   const r = await impl.fetchSnapshot({ baseUrl: 'https://fixture.invalid', apiKey: 'fixture', announcements: false });
   assert.equal(r.ok, true); assert.equal(r.balance, null); assert.equal(r.extra.unlimited, true); assert.equal(r.extra.used, 5);
+  assert.ok(r.lines.every(line => !line.includes('累计')));
 });
 
 test('Claude 0.5 utilization means 0.5 percent and optional Sonnet window is preserved', async () => {
