@@ -720,7 +720,7 @@ ipcMain.on('panel:ready', () => pushData());
 ipcMain.on('cmd:pet', (e, c) => sendPet('cmd', c));
 ipcMain.on('open-settings', (e, tab) => openSettings(tab));
 ipcMain.on('launch', (e, id) => (id ? launchFor(id) : launchCurrent()));
-ipcMain.handle('launch:defaults', () => ({ ...launcher.defaults(), ...agentLaunch() }));
+ipcMain.handle('launch:defaults', async () => { await launcher.discover(agents()); return { ...launcher.defaults(), ...agentLaunch() }; });
 ipcMain.handle('quips:generate', () => refreshQuips({ force: true }));
 ipcMain.handle('quips:state', () => ({ updatedAt: (state.data.quips || {}).updatedAt || 0, lastError: (state.data.quips || {}).lastError || null, counts: Object.fromEntries(Object.entries((state.data.quips || {}).byCharacter || {}).map(([k, v]) => [k, v.length])), hasKey: !!quipsKey() }));
 ipcMain.on('open-external', (e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
@@ -751,7 +751,7 @@ ipcMain.handle('config:set', (e, next) => {
   if (!config.save()) throw new Error('设置未能写入，请检查本机文件是否可写');
   if (next.autostart !== undefined) setAutostart(next.autostart);
   if (next.refresh) scheduleRefresh();
-  if (next.agents) updateTrayMenu();
+  if (next.agents) { updateTrayMenu(); launcher.discover(agents()); }
   if (next.providers) refreshAll({ force: true, reason: 'config' });
   else pushData();
   return config.data;
@@ -778,6 +778,7 @@ app.whenReady().then(() => {
   createPetWindow();
   if (firstRun) openSettings('providers');
   checkActivity();
+  launcher.discover(agents());
   refreshAll({ force: true, reason: 'startup' });
   scheduleRefresh();
   activityTimer = setInterval(checkActivity, 10000);
