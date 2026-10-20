@@ -59,7 +59,7 @@ function detectClaudeDirs(cfg) {
   return Array.from(new Set(out.filter(Boolean)));
 }
 
-function detect(cfg, providers) {
+function detect(cfg, providers, agents = []) {
   const now = Date.now();
   const windowMs = (Number(cfg.windowMin) || 15) * 60000;
   const det = {};
@@ -86,6 +86,7 @@ function detect(cfg, providers) {
   }
   if (cfg.geminiDir) { const t = newestInDir(path.join(cfg.geminiDir, 'tmp'), { depth: 2, limitDirs: 4 }); if (t) det.gemini = Math.max(det.gemini || 0, t); }
   if (cfg.qwenDir) { const t = newestInDir(path.join(cfg.qwenDir, 'projects'), { depth: 1, limitDirs: 4 }); if (t) det.qwen = Math.max(det.qwen || 0, t); }
+  for (const a of agents) { const t = a.dir ? newestInDir(a.dir, { depth: 1, limitDirs: 4 }) : 0; if (t) det[a.id] = Math.max(det[a.id] || 0, t); }
   let active = null, at = 0;
   for (const [k, t] of Object.entries(det)) { if (t > at) { at = t; active = k; } }
   if (!active || now - at > windowMs) return { active: null, at, details: det };
@@ -115,9 +116,19 @@ function characterForTitle(title) {
   for (const [re, id] of NATIVE_RULES) if (re.test(t)) return id;
   return null;
 }
+// 自定义 agent：进程名（| 分隔）或窗口标题正则，优先于内置规则。
+function agentForWindow(win, agents = []) {
+  const exe = String(win.processName || '').toLowerCase(), title = String(win.title || '').trim();
+  for (const a of agents) {
+    if (a.process && String(a.process).toLowerCase().split('|').map((x) => x.trim()).includes(exe)) return a.id;
+    if (a.title && title) { try { if (new RegExp(a.title, 'i').test(title)) return a.id; } catch (_) { /* 用户正则写错就跳过 */ } }
+  }
+  return null;
+}
 // 原生应用看进程名，标题可随会话变化；转圈标题只在终端中判定。
-function characterForWindow(win) {
+function characterForWindow(win, agents = []) {
   if (!win) return null;
+  const custom = agentForWindow(win, agents); if (custom) return custom;
   const exe = String(win.processName || '').toLowerCase();
   const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini' };
   if (native[exe]) return native[exe];
@@ -140,7 +151,8 @@ function codexRoute(cfg, providers = []) {
   if (/zhipu|glm|zcode/.test(name)) return 'zcode';
   return 'codex';
 }
-function routeForWindow(win, cfg, providers = []) {
+function routeForWindow(win, cfg, providers = [], agents = []) {
+  const custom = win && agentForWindow(win, agents); if (custom) return custom;
   const key = characterForWindow(win);
   // 网页的服务名就是角色，不能被本地 CLI 的路由配置覆盖。
   const browser = /^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/i.test(win && win.processName || '') || BROWSER_RE.test(win && win.title || '');

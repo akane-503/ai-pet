@@ -158,3 +158,28 @@ test('GPT uses registered Windows activation without a personal repair script or
   assert.equal(calls[0].command, 'explorer.exe');
   assert.equal(calls[0].args[0], 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App');
 });
+
+test('custom agents match by process or title before built-in rules and survive bad regex', () => {
+  const agents = [{ id: 'trae', process: 'Trae.exe|Trae CN.exe' }, { id: 'yb', title: '^腾讯元宝' }, { id: 'bad', title: '(' }];
+  assert.equal(activity.characterForWindow({ title: 'x', processName: 'Trae CN.exe' }, agents), 'trae');
+  assert.equal(activity.routeForWindow({ title: '腾讯元宝 - Google Chrome', processName: 'chrome.exe' }, {}, [], agents), 'yb');
+  assert.equal(activity.characterForWindow({ title: 'Codex', processName: 'ChatGPT.exe' }, agents), 'codex');
+});
+
+test('cursor usage prefers reported percent, falls back to overall ratio, builds cookie from JWT sub', () => {
+  const { parseUsage, cookieFor } = require('../src/main/providers/cursor');
+  const a = parseUsage({ membershipType: 'pro', billingCycleEnd: '2026-11-01T00:00:00Z', individualUsage: { plan: { used: 0, limit: 0, totalPercentUsed: 30.8, autoPercentUsed: 28.6 }, onDemand: { enabled: true, used: 50, limit: 200 } } });
+  assert.equal(a.windows[0].usedPercent, 30.8); assert.equal(a.windows[1].usedPercent, 25); assert.equal(a.plan, 'pro');
+  assert.equal(parseUsage({ individualUsage: { overall: { used: 4500, limit: 45000 } } }).windows[0].usedPercent, 10);
+  assert.equal(parseUsage({ individualUsage: { overall: { used: 1, limit: null } } }).windows.length, 0);
+  const jwt = 'h.' + Buffer.from(JSON.stringify({ sub: 'auth0|user_42' })).toString('base64url') + '.s';
+  assert.equal(cookieFor(jwt), 'WorkosCursorSessionToken=user_42%3A%3A' + jwt);
+});
+
+test('custom json provider reads dotted paths', () => {
+  const { parse } = require('../src/main/providers/custom');
+  const d = { data: { q: { used: 30, total: 120 }, wallet: [{ left: '8.5' }] } };
+  assert.equal(parse({ usedPath: 'data.q.used', limitPath: 'data.q.total' }, d).windows[0].usedPercent, 25);
+  assert.equal(parse({ balancePath: 'data.wallet.0.left' }, d).balance, 8.5);
+  assert.equal(parse({ usedPath: 'nope' }, d).windows.length, 0);
+});

@@ -32,6 +32,15 @@ function defaults() {
   };
 }
 
+// 自定义 agent 的默认启动：显式 target > 常见安装目录里的同名 exe > 网址
+function agentSpec(a) {
+  const exes = String(a.process || '').split('|').map((x) => x.trim()).filter(Boolean);
+  const dirs = [path.join(HOME, 'AppData', 'Local', 'Programs'), process.env.ProgramFiles || 'C:\\Program Files'];
+  const target = a.target || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
+  if (target) return { kind: 'app', label: a.name, target, process: path.basename(target), match: a.title || '', fallbackUrl: a.url || null };
+  return a.url ? { kind: 'url', label: a.name + ' 网页', target: a.url } : null;
+}
+
 function resolve(characterId, userLaunch) {
   const d = defaults()[characterId];
   const u = userLaunch && userLaunch[characterId];
@@ -111,4 +120,4 @@ async function launch(characterId, userLaunch) {
   } catch (e) { return { ok: false, message: e.message }; }
 }
 
-module.exports = { launch, resolve, defaults, isRunning };
+module.exports = { launch, resolve, defaults, isRunning, agentSpec };

@@ -19,6 +19,7 @@
     const patch = configDiff(baseline, cfg);
     cfg = await window.pet.invoke('config:set', patch);
     baseline = clone(cfg);
+    if (patch.agents) { meta = await window.pet.invoke('meta'); launchDefaults = await window.pet.invoke('launch:defaults'); renderProviders(); renderAgents(); }
     renderAppearance(); renderNotify(); renderLaunch();
     return cfg;
   }
@@ -38,6 +39,12 @@
     codexHome: { label: 'Codex 目录', type: 'text', wide: true },
     credentialsPath: { label: '凭据文件', type: 'text', wide: true },
     announcements: { label: '抓取公告', type: 'checkbox' },
+    dbPath: { label: 'state.vscdb', type: 'text', wide: true, placeholder: '留空：%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb' },
+    cookie: { label: 'Cookie（可选）', type: 'password', wide: true, hint: '读不到本机登录时，填网页版 WorkosCursorSessionToken' },
+    balancePath: { label: '余额字段', type: 'text', placeholder: 'data.balance' },
+    usedPath: { label: '已用字段', type: 'text', placeholder: 'data.used' },
+    limitPath: { label: '总额字段', type: 'text', placeholder: 'data.limit' },
+    currency: { label: '币种', type: 'text', placeholder: 'CNY / USD' },
   };
 
   // ---------- Tabs ----------
@@ -200,6 +207,20 @@
   document.querySelectorAll('[data-act]').forEach((el) => el.addEventListener('input', () => { cfg.activity[el.dataset.act] = el.type === 'number' ? Number(el.value) : el.value; }));
   $('#act-test').addEventListener('click', async () => { const r = await window.pet.invoke('activity:now'); $('#act-result').textContent = JSON.stringify({ active: r.active, at: r.at ? new Date(r.at).toLocaleString() : null, details: Object.fromEntries(Object.entries(r.details).map(([k, v]) => [k, v ? new Date(v).toLocaleString() : null])) }, null, 2); });
 
+  // ---------- Agents ----------
+  const AGENT_FIELDS = [['name', '名称'], ['process', '进程名（| 分隔）'], ['title', '窗口标题正则'], ['dir', '会话目录（可选）'], ['url', '网页地址'], ['image', '立绘图片路径（可选）']];
+  function renderAgents() {
+    cfg.agents = cfg.agents || [];
+    const looks = meta.characters.filter((c) => !c.look);
+    $('#agents').innerHTML = cfg.agents.map((a, i) => `<div class="card grid2" data-agent="${i}">
+      ${AGENT_FIELDS.map(([k, l]) => `<label>${l} <input type="text" data-g="${k}" value="${esc(a[k] || '')}"></label>`).join('')}
+      <label>借用立绘 <select data-g="look">${looks.map((c) => `<option value="${c.id}" ${a.look === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <div><button class="danger" data-del-agent="${i}">删除</button></div></div>`).join('');
+  }
+  $('#agents').addEventListener('input', (e) => { const card = e.target.closest('[data-agent]'); const k = e.target.dataset.g; if (card && k) cfg.agents[+card.dataset.agent][k] = e.target.value; });
+  $('#agents').addEventListener('click', (e) => { const i = e.target.dataset.delAgent; if (i !== undefined && confirm(`删除「${cfg.agents[+i].name}」？`)) { cfg.agents.splice(+i, 1); renderAgents(); } });
+  $('#add-agent').addEventListener('click', () => { cfg.agents.push({ id: 'agent-' + Date.now().toString(36), name: '新 Agent', process: '', look: 'deepseek' }); renderAgents(); });
+
   // ---------- Launch ----------
   let launchDefaults = {};
   const KINDS = [['app', '桌面应用 (exe)'], ['store', '商店应用 (AppID)'], ['wsl-cli', 'WSL 里的 CLI'], ['cli', 'Windows CLI'], ['url', '网页']];
@@ -266,7 +287,7 @@
     applyTheme(data.colors ? data : { character: cfg.appearance.character === 'auto' ? cfg.appearance.favorite : cfg.appearance.character });
     $('#userdata').textContent = meta.userData;
     $('#about-meta').textContent = `版本 ${meta.version} · Electron ${meta.electron} · 窗口吸附 ${meta.snapAvailable ? '可用' : '不可用（koffi 未加载）'} · 程序目录 ${meta.root}`;
-    renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderLaunch(); renderNotifications();
+    renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderAgents(); renderLaunch(); renderNotifications();
     goto((location.hash || '#providers').slice(1));
   })();
 })();

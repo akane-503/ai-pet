@@ -53,6 +53,13 @@ function defaultConfig() {
       claudeSettingsPath: '',
     },
     quips: { enabled: false, apiKey: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', intervalHours: 24, perCharacter: 25, keep: 80 },   // 用户主动启用后，使用自己的 DeepSeek Key 生成台词
+    // 自定义 agent：process 进程名（| 分隔）、title 窗口标题正则、dir 会话目录、look 借用哪个内置角色的立绘
+    agents: [
+      { id: 'trae', name: 'Trae', process: 'Trae.exe|Trae CN.exe', look: 'seed', url: 'https://www.trae.cn' },
+      { id: 'cursor', name: 'Cursor', process: 'Cursor.exe', look: 'claude', url: 'https://cursor.com' },
+      { id: 'workbuddy', name: 'WorkBuddy', process: 'WorkBuddy.exe', look: 'qwen', dir: path.join(WIN_HOME, '.workbuddy', 'sessions'), url: 'https://www.workbuddy.cn' },
+      { id: 'yuanbao', name: '元宝', process: 'yuanbao.exe', title: '^腾讯元宝', look: 'deepseek', url: 'https://yuanbao.tencent.com' },
+    ],
     launch: {},                 // characterId -> { kind: app|store|wsl-cli|cli|url, label, target, match, distro, command, cwd }
     layout: { x: null, y: null, snapped: null },
     autostart: false,
