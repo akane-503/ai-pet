@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, Notification, shell, nativeImage, powerMonitor, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { JsonStore, defaultConfig, defaultState, deepMerge } = require('./config');
+const { JsonStore, defaultConfig, defaultState, deepMerge, AGENT_PRESETS } = require('./config');
 const providers = require('./providers');
 const notifyEngine = require('./notify');
 const activity = require('./activity');
@@ -720,6 +720,7 @@ ipcMain.on('panel:ready', () => pushData());
 ipcMain.on('cmd:pet', (e, c) => sendPet('cmd', c));
 ipcMain.on('open-settings', (e, tab) => openSettings(tab));
 ipcMain.on('launch', (e, id) => (id ? launchFor(id) : launchCurrent()));
+ipcMain.handle('agents:presets', async () => { await launcher.discover(AGENT_PRESETS); return AGENT_PRESETS.map((a) => ({ ...a, installed: launcher.agentSpec(a).kind === 'app' })); });
 ipcMain.handle('launch:defaults', async () => { await launcher.discover(agents()); return { ...launcher.defaults(), ...agentLaunch() }; });
 ipcMain.handle('quips:generate', () => refreshQuips({ force: true }));
 ipcMain.handle('quips:state', () => ({ updatedAt: (state.data.quips || {}).updatedAt || 0, lastError: (state.data.quips || {}).lastError || null, counts: Object.fromEntries(Object.entries((state.data.quips || {}).byCharacter || {}).map(([k, v]) => [k, v.length])), hasKey: !!quipsKey() }));
@@ -778,7 +779,12 @@ app.whenReady().then(() => {
   createPetWindow();
   if (firstRun) openSettings('providers');
   checkActivity();
-  launcher.discover(agents());
+  // 首次：只把本机装了的预设 agent 加进来
+  launcher.discover([...agents(), ...AGENT_PRESETS]).then(() => {
+    if (config.data.agents) return;
+    config.data.agents = AGENT_PRESETS.filter((a) => launcher.agentSpec(a).kind === 'app' || (a.dir && fs.existsSync(a.dir)));
+    config.save(); updateTrayMenu(); pushData();
+  });
   refreshAll({ force: true, reason: 'startup' });
   scheduleRefresh();
   activityTimer = setInterval(checkActivity, 10000);

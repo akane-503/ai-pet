@@ -102,7 +102,7 @@
     <div class="card grid2">
       <label>判定窗口（分钟） <input type="number" min="1" data-act="windowMin" style="width:80px"></label>
       <label>Codex 目录 <input type="text" data-act="codexDir"></label>
-      <label>Claude 配置目录（留空自动：本机 + cc-switch 指向的 WSL 目录） <input type="text" data-act="claudeDir" placeholder="\\wsl.localhost\Ubuntu-24.04\home\xxx\.claude"></label>
+      <label>Claude 配置目录（留空自动查找） <input type="text" data-act="claudeDir" placeholder="例如 \\wsl.localhost\发行版\home\用户名\.claude"></label>
       <label>Gemini 目录 <input type="text" data-act="geminiDir"></label>
       <label>Qwen 目录 <input type="text" data-act="qwenDir"></label>
     </div>
@@ -110,7 +110,7 @@
     <h2>自定义 Agent</h2>
     <p class="hint">按进程名或窗口标题认出工具，桌宠就切过去；没有自己的立绘时借用一个内置角色。额度在「数据源」里加一个，对应角色选它。启动路径不用填，会从运行中的进程、安装记录、快捷方式和各盘目录里自动找 exe，找不到才开网页。</p>
     <div id="agents"></div>
-    <button id="add-agent">＋ 添加 Agent</button>
+    <div class="toolbar"><select id="agent-preset" aria-label="Agent 预设"><option value="">自定义…</option></select><button id="add-agent">＋ 添加 Agent</button></div>
   </section>
   <section id="tab-launch" class="tab hidden">
     <h1>打开工具</h1>

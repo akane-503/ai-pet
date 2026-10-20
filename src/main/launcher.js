@@ -9,26 +9,35 @@ const winsnap = require('./winsnap');
 const HOME = process.env.USERPROFILE || '';
 const exists = (p) => { try { return !!p && fs.existsSync(p); } catch (_) { return false; } };
 
+// 内置角色的桌面版：本机搜得到 exe 就开应用，否则开网页
+const LOCAL = process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local');
+const APPS = {
+  deepseek: { name: 'DSH Desktop', process: 'DSH Desktop.exe', title: 'DeepSeek Harness|DSH Desktop', url: 'https://chat.deepseek.com', web: 'DeepSeek' },
+  zcode: { name: 'ZCode', process: 'ZCode.exe', title: '^ZCode', url: 'https://chat.z.ai', web: 'Z.ai' },
+  gemini: { name: 'Gemini 桌面版', process: 'Gemini.exe', title: '^(Google\\s+)?Gemini(\\b|$)', paths: [path.join(LOCAL, 'Google', 'Gemini', 'Gemini.exe')], url: 'https://gemini.google.com', web: 'Gemini' },
+  qwen: { name: '千问', process: 'Qwen.exe', url: 'https://chat.qwen.ai', web: '千问' },
+  kimi: { name: 'Kimi', process: 'Kimi.exe', url: 'https://www.kimi.com', web: 'Kimi' },
+  grok: { name: 'Grok', process: 'Grok.exe', url: 'https://grok.com', web: 'Grok' },
+  seed: { name: '豆包', process: 'Doubao.exe', url: 'https://www.doubao.com', web: '豆包' },
+};
+
+const CLAUDE_APP = { name: 'Claude 桌面版', process: 'Claude.exe', title: '^Claude$', url: 'https://claude.ai', web: 'Claude' };
+
+// Claude：Claude Code 数据在 WSL 里 → WSL 终端；Windows 装了 CLI → 本机终端；否则桌面版 / 网页
+function claudeSpec(dirs) {
+  const wslDir = dirs.find((d) => /^\\\\wsl(\.localhost|\$)\\/i.test(d) && exists(d));
+  if (wslDir) return { kind: 'wsl-cli', label: 'Claude Code (WSL)', distro: wslDir.split('\\')[3] || '', command: 'claude', cwd: '~' };
+  const cli = [path.join(HOME, '.local', 'bin', 'claude.exe'), path.join(process.env.APPDATA || '', 'npm', 'claude.cmd')].find(exists);
+  if (cli) return { kind: 'cli', label: 'Claude Code', command: 'claude' };
+  return agentSpec(CLAUDE_APP);
+}
+
 // 每个角色的默认启动方式；用户可在设置里覆盖（config.launch[characterId]）
 function defaults() {
-  const localApps = path.join(HOME, 'AppData', 'Local', 'Programs');
-  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
-  const zcodeTarget = [path.join(programFiles, 'ZCode', 'ZCode.exe'), path.join(localApps, 'ZCode', 'ZCode.exe')].find(exists) || path.join(programFiles, 'ZCode', 'ZCode.exe');
-  const dshTarget = [path.join(localApps, 'DSH Desktop', 'DSH Desktop.exe'), path.join(programFiles, 'DSH Desktop', 'DSH Desktop.exe')].find(exists) || path.join(localApps, 'DSH Desktop', 'DSH Desktop.exe');
-  // Google 的稳定入口会转交给当前版本，避免固定 app-x.y.z 下的 exe。
-  const geminiTarget = [path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Google', 'Gemini', 'Gemini.exe'), path.join(programFiles, 'Google', 'Gemini', 'Gemini.exe'), path.join(localApps, 'Gemini', 'Gemini.exe'), path.join(programFiles, 'Gemini', 'Gemini.exe')].find(exists);
   return {
-    deepseek: { kind: 'app', label: 'DSH Desktop', target: dshTarget, match: 'DeepSeek Harness|DSH Desktop', process: 'DSH Desktop.exe', fallbackUrl: 'https://chat.deepseek.com' },
+    ...Object.fromEntries(Object.entries(APPS).map(([id, a]) => [id, agentSpec(a)])),
     codex: { kind: 'store', label: 'GPT / Codex 桌面版', target: 'OpenAI.Codex_2p2nqsd0c76g0!App', match: '^(Codex|ChatGPT)(\\b|$)', process: 'ChatGPT.exe', fallbackUrl: 'https://chatgpt.com/codex' },
-    claude: { kind: 'wsl-cli', label: 'Claude Code (WSL)', distro: '', command: 'claude', cwd: '~' },
-    zcode: { kind: 'app', label: 'ZCode', target: zcodeTarget, match: '^ZCode', process: 'ZCode.exe' },
-    gemini: geminiTarget
-      ? { kind: 'app', label: 'Gemini 桌面版', target: geminiTarget, match: '^(Google\\s+)?Gemini(\\b|$)', process: 'Gemini.exe', fallbackUrl: 'https://gemini.google.com' }
-      : { kind: 'url', label: 'Gemini 网页', target: 'https://gemini.google.com' },
-    qwen: { kind: 'url', label: '千问网页', target: 'https://chat.qwen.ai' },
-    kimi: { kind: 'url', label: 'Kimi 网页', target: 'https://www.kimi.com' },
-    grok: { kind: 'url', label: 'Grok 网页', target: 'https://grok.com' },
-    seed: { kind: 'url', label: '豆包网页', target: 'https://www.doubao.com' },
+    claude: claudeSpec(require('./activity').detectClaudeDirs({})),
   };
 }
 
@@ -53,8 +62,8 @@ foreach($n in $names){ if(!$hits[$n]){ foreach($d in (Get-PSDrive -PSProvider Fi
 $hits | ConvertTo-Json -Compress`;
 
 // 后台搜一次，结果进 found；agentSpec 同步读缓存
-function discover(agents) {
-  const names = [...new Set(agents.flatMap(exeNames).map((x) => x.toLowerCase()))].filter((n) => !tried.has(n));
+function discover(agents = []) {
+  const names = [...new Set([...agents, ...Object.values(APPS), CLAUDE_APP].flatMap(exeNames).map((x) => x.toLowerCase()))].filter((n) => !tried.has(n));
   names.forEach((n) => tried.add(n));
   if (!names.length || process.platform !== 'win32') return pending;
   const script = FIND_PS.replace('__NAMES__', names.map((n) => `'${n.replace(/'/g, "''")}'`).join(','));
@@ -70,10 +79,10 @@ function discover(agents) {
 function agentSpec(a) {
   const exes = exeNames(a);
   const dirs = [path.join(HOME, 'AppData', 'Local', 'Programs'), process.env.ProgramFiles || 'C:\\Program Files'];
-  const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists)
+  const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists) || (a.paths || []).find(exists)
     || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
   if (target) return { kind: 'app', label: a.name, target, process: path.basename(target), match: a.title || '', fallbackUrl: a.url || null };
-  return a.url ? { kind: 'url', label: a.name + ' 网页', target: a.url } : null;
+  return a.url ? { kind: 'url', label: (a.web || a.name) + ' 网页', target: a.url } : null;
 }
 
 function resolve(characterId, userLaunch) {
@@ -155,4 +164,4 @@ async function launch(characterId, userLaunch) {
   } catch (e) { return { ok: false, message: e.message }; }
 }
 
-module.exports = { launch, resolve, defaults, isRunning, agentSpec, discover, FIND_PS };
+module.exports = { launch, resolve, defaults, isRunning, agentSpec, discover, claudeSpec, FIND_PS };

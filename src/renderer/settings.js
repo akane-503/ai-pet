@@ -218,8 +218,19 @@
       <div><button class="danger" data-del-agent="${i}">删除</button></div></div>`).join('');
   }
   $('#agents').addEventListener('input', (e) => { const card = e.target.closest('[data-agent]'); const k = e.target.dataset.g; if (card && k) cfg.agents[+card.dataset.agent][k] = e.target.value; });
-  $('#agents').addEventListener('click', (e) => { const i = e.target.dataset.delAgent; if (i !== undefined && confirm(`删除「${cfg.agents[+i].name}」？`)) { cfg.agents.splice(+i, 1); renderAgents(); } });
-  $('#add-agent').addEventListener('click', () => { cfg.agents.push({ id: 'agent-' + Date.now().toString(36), name: '新 Agent', process: '', look: 'deepseek' }); renderAgents(); });
+  $('#agents').addEventListener('click', (e) => { const i = e.target.dataset.delAgent; if (i !== undefined && confirm(`删除「${cfg.agents[+i].name}」？`)) { cfg.agents.splice(+i, 1); renderAgents(); renderAgentPresets(); } });
+  let presets = [];
+  function renderAgentPresets() {
+    const left = presets.filter((p) => !cfg.agents.some((a) => a.id === p.id));
+    $('#agent-preset').innerHTML = left.map((p) => `<option value="${p.id}">${esc(p.name)}${p.installed ? '（本机已装）' : ''}</option>`).join('') + '<option value="">自定义…</option>';
+  }
+  window.pet.invoke('agents:presets').then((r) => { presets = r; renderAgentPresets(); });
+  $('#add-agent').addEventListener('click', () => {
+    const p = presets.find((x) => x.id === $('#agent-preset').value);
+    const { installed, ...preset } = p || {};
+    cfg.agents.push(p ? preset : { id: 'agent-' + Date.now().toString(36), name: '新 Agent', process: '', look: 'deepseek' });
+    renderAgents(); renderAgentPresets();
+  });
 
   // ---------- Launch ----------
   let launchDefaults = {};
@@ -236,7 +247,7 @@
           <label>名称 <input type="text" data-l="label" value="${esc(v.label || '')}"></label>
           <label style="grid-column:1/-1">目标（exe 路径 / AppID / 网址） <input type="text" data-l="target" value="${esc(v.target || '')}"><button data-pick-exe="${c.id}">…</button></label>
           <label>命令（CLI） <input type="text" data-l="command" value="${esc(v.command || '')}" placeholder="claude"></label>
-          <label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" placeholder="Ubuntu-24.04"></label>
+          <label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" placeholder="留空 = 默认发行版"></label>
           <label>工作目录 <input type="text" data-l="cwd" value="${esc(v.cwd || '')}" placeholder="~"></label>
           <label>已开检测（窗口标题正则） <input type="text" data-l="match" value="${esc(v.match || '')}"></label>
         </div>
