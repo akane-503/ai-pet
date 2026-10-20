@@ -589,7 +589,7 @@ function buildMenuTemplate() {
     ...allCharacters().map((c) => ({ label: c.name, type: 'radio', checked: ap.character === c.id, click: () => setAppearance({ character: c.id }) }))];
   return [
     { label: `🚀 打开 ${(launcher.resolve(currentCharacter || resolveCharacter(), launchCfg()) || {}).label || '对应工具'}`, click: () => launchCurrent() },
-    { label: '🚀 打开其他…', submenu: allCharacters().map((c) => { const sp = launcher.resolve(c.id, launchCfg()); return { label: `${c.name}${sp ? ' → ' + sp.label : ''}`, enabled: !!sp, click: () => launchFor(c.id) }; }) },
+    { label: '🚀 打开其他…', submenu: allCharacters().map((c) => [c, launcher.resolve(c.id, launchCfg())]).filter(([, sp]) => sp).map(([c, sp]) => ({ label: sp.label, click: () => launchFor(c.id) })) },
     { type: 'separator' },
     { label: '🔄 刷新额度', click: () => refreshAll({ force: true, reason: 'menu' }) },
     { label: '💬 显示气泡', click: () => sendPet('cmd', { name: 'bubble' }) },
@@ -620,9 +620,7 @@ function petMenuTemplate() {
   return [
     ...all.slice(0, 2),
     { type: 'separator' },
-    ...all.slice(4, 8), // 气泡 / 台词 / 摸头 / 消息
-    { type: 'separator' },
-    { label: '🎛 快捷面板', click: () => togglePanel() },
+    ...all.slice(6, 8), // 摸头 / 消息
     { label: '隐藏桌宠（托盘图标可唤回）', click: () => { if (petWin) { petWin.hide(); updateTrayMenu(); } } },
   ];
 }
