@@ -15,10 +15,10 @@ const APPS = {
   deepseek: { name: 'DSH Desktop', process: 'DSH Desktop.exe', title: 'DeepSeek Harness|DSH Desktop', url: 'https://chat.deepseek.com', web: 'DeepSeek' },
   zcode: { name: 'ZCode', process: 'ZCode.exe', title: '^ZCode', url: 'https://chat.z.ai', web: 'Z.ai' },
   gemini: { name: 'Gemini 桌面版', process: 'Gemini.exe', title: '^(Google\\s+)?Gemini(\\b|$)', paths: [path.join(LOCAL, 'Google', 'Gemini', 'Gemini.exe')], url: 'https://gemini.google.com', web: 'Gemini' },
-  qwen: { name: '千问', process: 'Qwen.exe', url: 'https://chat.qwen.ai', web: '千问' },
-  kimi: { name: 'Kimi', process: 'Kimi.exe', url: 'https://www.kimi.com', web: 'Kimi' },
-  grok: { name: 'Grok', process: 'Grok.exe', url: 'https://grok.com', web: 'Grok' },
-  seed: { name: '豆包', process: 'Doubao.exe', url: 'https://www.doubao.com', web: '豆包' },
+  qwen: { name: '千问', label: '^(千问|通义千问|通义)$', url: 'https://www.qianwen.com', web: '千问' },
+  kimi: { name: 'Kimi', label: '^Kimi(智能助手)?$', url: 'https://www.kimi.com', web: 'Kimi' },
+  grok: { name: 'Grok', url: 'https://grok.com', web: 'Grok' }, // xAI 没有官方 Windows 客户端
+  seed: { name: '豆包', process: 'Doubao.exe', label: '^豆包$', url: 'https://www.doubao.com', web: '豆包' },
 };
 
 const CLAUDE_APP = { name: 'Claude 桌面版', process: 'Claude.exe', title: '^Claude$', url: 'https://claude.ai', web: 'Claude' };
@@ -42,31 +42,39 @@ function defaults() {
 }
 
 const exeNames = (a) => String(a.process || '').split('|').map((x) => x.trim()).filter(Boolean);
-const found = {}; // exe 小写名 -> 搜到的完整路径
+const labelKey = (a) => a.label ? '@' + a.label : '';
+const found = {}; // exe 小写名 / '@显示名正则' -> 搜到的完整路径
 const tried = new Set(); // 本次运行已搜过的名字，搜不到也不重复跑
 let pending = Promise.resolve(found); // 正在跑的搜索，后来的调用等它结束
 
 // 一次 PowerShell 找 exe：正在运行的进程 > 卸载注册表 > App Paths > 开始菜单/桌面快捷方式 > 各盘两层目录
 const FIND_PS = `[Console]::OutputEncoding=[Text.Encoding]::UTF8
-$names=@(__NAMES__); $hits=@{}
-function Add($p){ if(!$p){return}; $p=($p -replace ',-?\\d+$','').Trim().Trim('"'); $n=[IO.Path]::GetFileName($p).ToLower()
+$names=@(__NAMES__); $labels=@(__LABELS__); $hits=@{}
+function Clean($p){ ($p -replace ',-?\\d+$','').Trim().Trim('"') }
+function Add($p){ if(!$p){return}; $p=Clean $p; $n=[IO.Path]::GetFileName($p).ToLower()
   if($names -contains $n -and !$hits[$n] -and (Test-Path -LiteralPath $p)){ $hits[$n]=$p } }
+function AddLabel($name,$p){ if(!$name -or !$p){return}; $p=Clean $p; if($p -notmatch '\\.exe$' -or !(Test-Path -LiteralPath $p)){return}
+  foreach($l in $labels){ if(!$hits['@'+$l] -and $name -match $l){ $hits['@'+$l]=$p } } }
 Get-Process -EA 0 | % { Add $_.Path }
 $u='Software\\Microsoft\\Windows\\CurrentVersion'
 Get-ItemProperty "HKCU:\\$u\\Uninstall\\*","HKLM:\\$u\\Uninstall\\*","HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*" -EA 0 | % {
-  Add $_.DisplayIcon; $l=$_.InstallLocation; if($l){ foreach($n in $names){ Add (Join-Path $l.Trim('"') $n) } } }
+  Add $_.DisplayIcon; AddLabel $_.DisplayName $_.DisplayIcon; $l=$_.InstallLocation; if($l){ foreach($n in $names){ Add (Join-Path $l.Trim('"') $n) } } }
 Get-ItemProperty "HKCU:\\$u\\App Paths\\*","HKLM:\\$u\\App Paths\\*" -EA 0 | % { Add $_.'(default)' }
 $sh=New-Object -ComObject WScript.Shell
-Get-ChildItem "$env:APPDATA\\Microsoft\\Windows\\Start Menu","$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:USERPROFILE\\Desktop","$env:PUBLIC\\Desktop" -Recurse -Filter *.lnk -EA 0 | % { Add $sh.CreateShortcut($_.FullName).TargetPath }
+Get-ChildItem "$env:APPDATA\\Microsoft\\Windows\\Start Menu","$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:USERPROFILE\\Desktop","$env:PUBLIC\\Desktop" -Recurse -Filter *.lnk -EA 0 | % { $t=$sh.CreateShortcut($_.FullName).TargetPath; Add $t; AddLabel $_.BaseName $t }
 foreach($n in $names){ if(!$hits[$n]){ foreach($d in (Get-PSDrive -PSProvider FileSystem).Root){ Resolve-Path "$d*\\$n","$d*\\*\\$n" -EA 0 | % { Add $_.Path } } } }
 $hits | ConvertTo-Json -Compress`;
 
 // 后台搜一次，结果进 found；agentSpec 同步读缓存
 function discover(agents = []) {
-  const names = [...new Set([...agents, ...Object.values(APPS), CLAUDE_APP].flatMap(exeNames).map((x) => x.toLowerCase()))].filter((n) => !tried.has(n));
-  names.forEach((n) => tried.add(n));
-  if (!names.length || process.platform !== 'win32') return pending;
-  const script = FIND_PS.replace('__NAMES__', names.map((n) => `'${n.replace(/'/g, "''")}'`).join(','));
+  const all = [...agents, ...Object.values(APPS), CLAUDE_APP];
+  const fresh = (xs) => [...new Set(xs)].filter((n) => n && !tried.has(n));
+  const names = fresh(all.flatMap(exeNames).map((x) => x.toLowerCase()));
+  const labels = fresh(all.map((a) => a.label || ''));
+  [...names, ...labels].forEach((n) => tried.add(n));
+  if ((!names.length && !labels.length) || process.platform !== 'win32') return pending;
+  const q = (xs) => xs.map((n) => `'${n.replace(/'/g, "''")}'`).join(',');
+  const script = FIND_PS.replace('__NAMES__', () => q(names)).replace('__LABELS__', () => q(labels)); // 函数形式：正则里的 $' 不能被当替换模式
   return (pending = pending.then(() => new Promise((done) => {
     execFile('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 60000 }, (_e, out) => {
       try { Object.assign(found, JSON.parse(String(out).trim() || '{}')); } catch (_) { /* 搜不到就保持网页回退 */ }
@@ -79,7 +87,7 @@ function discover(agents = []) {
 function agentSpec(a) {
   const exes = exeNames(a);
   const dirs = [path.join(HOME, 'AppData', 'Local', 'Programs'), process.env.ProgramFiles || 'C:\\Program Files'];
-  const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists) || (a.paths || []).find(exists)
+  const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists) || [found[labelKey(a)]].find(exists) || (a.paths || []).find(exists)
     || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
   if (target) return { kind: 'app', label: a.name, target, process: path.basename(target), match: a.title || '', fallbackUrl: a.url || null };
   return a.url ? { kind: 'url', label: (a.web || a.name) + ' 网页', target: a.url } : null;

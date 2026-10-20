@@ -12,7 +12,7 @@ const AGENT_PRESETS = [
   { id: 'trae', name: 'Trae', process: 'Trae.exe|Trae CN.exe', look: 'seed', url: 'https://www.trae.ai' },
   { id: 'windsurf', name: 'Windsurf', process: 'Windsurf.exe', look: 'gemini', url: 'https://windsurf.com' },
   { id: 'kiro', name: 'Kiro', process: 'Kiro.exe', look: 'grok', url: 'https://kiro.dev' },
-  { id: 'qoder', name: 'Qoder', process: 'Qoder.exe', look: 'qwen', url: 'https://qoder.com' },
+  { id: 'qoder', name: 'Qoder', process: 'Qoder IDE.exe|Qoder.exe', look: 'qwen', url: 'https://qoder.com' },
   { id: 'codebuddy', name: 'CodeBuddy', process: 'CodeBuddy.exe', look: 'kimi', url: 'https://www.codebuddy.ai' },
   { id: 'workbuddy', name: 'WorkBuddy', process: 'WorkBuddy.exe', look: 'qwen', dir: path.join(WIN_HOME, '.workbuddy', 'sessions'), url: 'https://www.workbuddy.cn' },
   { id: 'yuanbao', name: '元宝', process: 'yuanbao.exe', title: '^腾讯元宝', look: 'deepseek', url: 'https://yuanbao.tencent.com' },
