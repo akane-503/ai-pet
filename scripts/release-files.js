@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const FILES = ['package.json', 'package-lock.json', '.npmrc', '.gitignore', 'start.cmd', 'README.md', 'THIRD_PARTY_NOTICES.md',
   'scripts/start.ps1', 'scripts/pack.js', 'scripts/release-files.js', 'scripts/install-shortcuts.ps1',
-  'scripts/test-behavior.js', 'scripts/test-data.js', 'scripts/test-release.js', 'scripts/test-geometry.js'];
+  'scripts/test-behavior.js', 'scripts/test-data.js', 'scripts/test-release.js', 'scripts/test-geometry.js',
+  'build/installer.nsh', 'build/quota-installer.nsh', 'build/keytest.ps1', 'scripts/installer-latest.js', 'scripts/build-editions.js'];
 function filesForRelease(root) {
   const files = [...FILES];
   function walk(relative) {
@@ -14,7 +15,7 @@ function filesForRelease(root) {
       else if (entry.isFile()) files.push(name);
     }
   }
-  walk('src'); walk('assets');
+  walk('src'); walk('assets'); walk('skills');
   return files.sort();
 }
 function scanRelease(root, files) {

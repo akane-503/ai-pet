@@ -34,6 +34,8 @@
     accessToken: { label: '系统访问令牌', type: 'password', hint: '可选：new-api 个人设置里的“系统访问令牌”，配合用户ID查余额更准' },
     userId: { label: '用户 ID', type: 'text' },
     baseUrl: { label: '地址', type: 'url', wide: true, placeholder: 'https://xxx.com' },
+    project: { label: 'GCP 项目（可选）', type: 'text', placeholder: '留空自动查', hint: '官方 OAuth 查配额需要项目 ID，一般能自动拿到' },
+    auth: { label: '取数方式', type: 'text', placeholder: 'auto / relay / oauth', hint: 'auto：有中转站地址就走中转站，否则读 ~/.gemini 的登录凭据' },
     lowBalance: { label: '余额低于提醒', type: 'number' },
     warnPercent: { label: '用量超过 % 提醒', type: 'number' },
     codexHome: { label: 'Codex 目录', type: 'text', wide: true },
@@ -90,7 +92,7 @@
       const time = s.at ? new Date(s.at).toLocaleString() : '时间未知';
       if (!s.ok && !s.stale) { out.textContent = '获取失败：' + (s.error || '无数据'); return; }
       const fmt = (n) => Number.isFinite(n) ? (s.currency === 'CNY' ? '¥' : s.currency === 'USD' ? '$' : '') + n.toFixed(2) : '未知';
-      const relay = window.PetUsage.isRelay(p) ? window.PetUsage.relayMetric(s, data.ledgers && data.ledgers[p.id]) : null;
+      const relay = window.PetUsage.isRelay(p, s) ? window.PetUsage.relayMetric(s, data.ledgers && data.ledgers[p.id]) : null;
       const value = relay ? relay.label + ' ' + fmt(relay.value) + ' · ' + relay.hint
         : s.balance != null ? '余额 ' + fmt(s.balance) + (s.granted != null ? ' · 其中赠送 ' + fmt(s.granted) : '')
         : (s.windows || []).map((w) => `${w.label} 已用 ${Math.round(w.usedPercent)}%`).join(' · ');
@@ -130,9 +132,10 @@
     const r = await window.pet.invoke('importers:scan');
     const rows = [];
     for (const d of r.deepseek) rows.push({ label: 'DeepSeek Key', from: d.from, apply: { type: 'deepseek', apiKey: d.key } });
-    for (const x of r.relays) rows.push({ label: (x.type === 'zhipu' ? 'GLM' : x.type === 'newapi' ? '中转站' : x.type) + ' ' + x.baseUrl, from: x.from, apply: { type: x.type === 'official' ? 'newapi' : x.type, baseUrl: x.baseUrl, apiKey: x.apiKey } });
+    for (const x of r.relays) rows.push({ label: (x.type === 'zhipu' ? 'GLM' : x.type === 'newapi' ? '中转站' : x.type === 'gemini' ? 'Gemini 中转站' : x.type) + ' ' + x.baseUrl, from: x.from, apply: { type: x.type === 'official' ? 'newapi' : x.type, baseUrl: x.baseUrl, apiKey: x.apiKey } });
     rows.push({ label: 'Codex auth.json', from: r.codexAuth ? '已找到' : '未找到', apply: r.codexAuth ? { type: 'codex' } : null });
     for (const c of r.claudeCreds) rows.push({ label: 'Claude 登录凭据', from: c, apply: { type: 'claude-oauth', credentialsPath: c } });
+    if (r.geminiCreds) rows.push({ label: 'Gemini CLI 登录凭据', from: '~/.gemini/oauth_creds.json', apply: { type: 'gemini', auth: 'oauth' } });
     box.innerHTML = rows.map((row, i) => `<div class="scan-item"><b>${esc(row.label)}</b><code>${esc(row.from)}</code>${row.apply ? `<button data-scan="${i}">填入</button>` : ''}</div>`).join('') || '没扫到什么';
     box.onclick = (e) => {
       const i = e.target.dataset.scan; if (i === undefined) return;
@@ -235,22 +238,28 @@
   // ---------- Launch ----------
   let launchDefaults = {};
   const KINDS = [['app', '桌面应用 (exe)'], ['store', '商店应用 (AppID)'], ['wsl-cli', 'WSL 里的 CLI'], ['cli', 'Windows CLI'], ['url', '网页']];
+  const CLI_COMMANDS = { claude: 'claude', codex: 'codex', gemini: 'gemini', qwen: 'qwen' };
   function renderLaunch() {
     cfg.launch = cfg.launch || {};
     $('#launch-list').innerHTML = meta.characters.map((c) => {
       const d = launchDefaults[c.id] || {}; const u = cfg.launch[c.id] || {}; const v = { ...d, ...u };
       const custom = !!u.kind;
+      const cli = v.kind === 'cli' || v.kind === 'wsl-cli';
+      const workspace = cli || (v.kind === 'store' && /^OpenAI\.Codex_/.test(v.target || '')) || (v.kind === 'app' && /(?:^|[\\/])(code|cursor|windsurf|kiro|trae( cn)?|qoder( ide)?|codebuddy|workbuddy|zcode|dsh desktop)\.exe$/i.test(v.target || ''));
+      const targetLabel = v.kind === 'url' ? '网页地址' : v.kind === 'store' ? '应用 AppID' : '应用路径';
+      const entry = cli ? v.command : v.target;
       return `<div class="card" data-launch="${c.id}">
         <h3>${esc(c.name)} <span class="hint" style="display:inline">默认：${esc(d.label || '无')}${custom ? ' · 已自定义' : ''}</span></h3>
         <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px">
           <label>方式 <select data-l="kind">${KINDS.map(([k, n]) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label>名称 <input type="text" data-l="label" value="${esc(v.label || '')}"></label>
-          <label style="grid-column:1/-1">目标（exe 路径 / AppID / 网址） <input type="text" data-l="target" value="${esc(v.target || '')}"><button data-pick-exe="${c.id}">…</button></label>
-          <label>命令（CLI） <input type="text" data-l="command" value="${esc(v.command || '')}" placeholder="claude"></label>
-          <label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" placeholder="留空 = 默认发行版"></label>
-          <label>工作目录 <input type="text" data-l="cwd" value="${esc(v.cwd || '')}" placeholder="~"></label>
-          <label>已开检测（窗口标题正则） <input type="text" data-l="match" value="${esc(v.match || '')}"></label>
+          ${cli ? `<label style="grid-column:1/-1">启动命令 <input type="text" data-l="command" value="${esc(v.command || '')}" placeholder="${esc(CLI_COMMANDS[c.id] || '输入已安装工具的启动命令')}"></label>` : `<label style="grid-column:1/-1">${targetLabel} <input type="text" data-l="target" value="${esc(v.target || '')}">${v.kind === 'app' ? `<button data-pick-exe="${c.id}">选择程序…</button>` : ''}</label>`}
+          ${v.kind === 'wsl-cli' ? `<label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" placeholder="留空 = 默认发行版"></label>` : ''}
+          ${workspace ? `<label>默认工作目录 <input type="text" data-l="cwd" value="${esc(v.cwd || '')}" placeholder="留空使用工具默认目录"><button data-pick-workspace="${c.id}">选择文件夹…</button></label>` : ''}
+          ${v.kind === 'app' || v.kind === 'store' ? `<label>已开检测（窗口标题正则） <input type="text" data-l="match" value="${esc(v.match || '')}"></label>` : ''}
         </div>
+        <p class="hint" data-launch-entry style="overflow-wrap:anywhere">${custom ? '当前启动' : '自动检测'}：${esc(entry || '尚未配置，请填写启动入口')}</p>
+        ${workspace ? `<p class="hint">支持工作区的工具会打开这个目录；交接时优先使用交接文件所在目录。${v.kind === 'wsl-cli' ? 'WSL 也可填 Linux 路径。' : ''}</p>` : '<p class="hint">此启动方式不支持指定工作区。</p>'}
         <div style="display:flex;gap:8px;margin-top:8px"><button data-test-launch="${c.id}">试一下</button>${custom ? `<button data-reset-launch="${c.id}">恢复默认</button>` : ''}</div>
       </div>`;
     }).join('');
@@ -258,13 +267,24 @@
   $('#launch-list').addEventListener('input', (e) => {
     const card = e.target.closest('[data-launch]'); const k = e.target.dataset.l; if (!card || !k) return;
     const id = card.dataset.launch; cfg.launch[id] = cfg.launch[id] || { ...(launchDefaults[id] || {}) };
-    cfg.launch[id][k] = e.target.value;
+    if (k === 'kind') {
+      const old = cfg.launch[id]; const kind = e.target.value; const d = launchDefaults[id] || {};
+      cfg.launch[id] = kind === d.kind ? { ...d, ...(old.cwd ? { cwd: old.cwd } : {}) } : {
+        kind, label: meta.characters.find(c => c.id === id)?.name || id,
+        ...(kind === 'cli' || kind === 'wsl-cli' ? { command: old.command || CLI_COMMANDS[id] || '', cwd: old.cwd || '', ...(kind === 'wsl-cli' ? { distro: old.distro || '' } : {}) } : { target: kind === 'url' ? (d.fallbackUrl || (d.kind === 'url' ? d.target : '')) : '' }),
+      };
+      renderLaunch();
+    } else {
+      cfg.launch[id][k] = e.target.value;
+      if (k === 'command' || k === 'target') card.querySelector('[data-launch-entry]').textContent = '当前启动：' + (e.target.value || '尚未配置，请填写启动入口');
+    }
   });
   $('#launch-list').addEventListener('click', async (e) => {
     const t = e.target;
     if (t.dataset.testLaunch) { await persistSettings(); window.pet.send('launch', t.dataset.testLaunch); }
     if (t.dataset.resetLaunch) { delete cfg.launch[t.dataset.resetLaunch]; renderLaunch(); }
     if (t.dataset.pickExe) { const f = await window.pet.invoke('pick-file'); if (f) { const id = t.dataset.pickExe; cfg.launch[id] = cfg.launch[id] || { ...(launchDefaults[id] || {}) }; cfg.launch[id].target = f; cfg.launch[id].kind = 'app'; renderLaunch(); } }
+    if (t.dataset.pickWorkspace) { const folder = await window.pet.invoke('pick-directory'); if (folder) { const id = t.dataset.pickWorkspace; cfg.launch[id] = cfg.launch[id] || { ...(launchDefaults[id] || {}) }; cfg.launch[id].cwd = folder; renderLaunch(); } }
   });
 
   // ---------- Notifications ----------
@@ -299,6 +319,12 @@
     $('#userdata').textContent = meta.userData;
     $('#about-meta').textContent = `版本 ${meta.version} · Electron ${meta.electron} · 窗口吸附 ${meta.snapAvailable ? '可用' : '不可用（koffi 未加载）'} · 程序目录 ${meta.root}`;
     renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderAgents(); renderLaunch(); renderNotifications();
+    if (meta.quotaOnly) {
+      document.querySelector('.brand').firstChild.textContent = 'AI 桌宠 B';
+      document.querySelector('[data-tab="launch"]').hidden = true;
+      const q = document.querySelector('#quips-gen'); if (q) q.closest('.card').hidden = true;
+      window.PetOnboarding.mount({ cfg, meta, invoke: (name, p) => window.pet.invoke(name, p), save: async (provider, index) => { cfg.providers[index] = provider; cfg.quotaOnboardingDone = true; try { await persistSettings(); } catch (e) { cfg.quotaOnboardingDone = false; throw e; } }, done: () => { renderProviders(); window.pet.send('refresh'); } });
+    }
     goto((location.hash || '#providers').slice(1));
   })();
 })();

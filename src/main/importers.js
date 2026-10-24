@@ -73,6 +73,15 @@ function zcodeCandidates() {
   return out.filter((c) => { const k = c.baseUrl + '|' + c.apiKey; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
+// Gemini CLI 走中转站时，地址和 Key 在 ~/.gemini/.env（官方 OAuth 则只有 oauth_creds.json）
+function geminiCandidates() {
+  const env = require('./providers/gemini').readEnvFile(path.join(HOME, '.gemini', '.env'));
+  const baseUrl = env.GOOGLE_GEMINI_BASE_URL || env.GEMINI_BASE_URL || '';
+  const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || '';
+  if (!baseUrl || /googleapis\.com/i.test(baseUrl)) return [];
+  return [{ baseUrl, apiKey, from: '~/.gemini/.env' }];
+}
+
 function classify(baseUrl) {
   const u = String(baseUrl || '').toLowerCase();
   if (u.includes('bigmodel.cn') || u.includes('z.ai')) return 'zhipu';
@@ -85,9 +94,10 @@ function scan() {
   const relays = [...claudeSettingsCandidates(), ...ccSwitchCandidates()];
   return {
     deepseek: findDeepSeekKey(),
-    relays: [...relays.map((r) => ({ ...r, type: classify(r.baseUrl) })), ...zcodeCandidates().map((r) => ({ ...r, type: 'zhipu' }))],
+    relays: [...relays.map((r) => ({ ...r, type: classify(r.baseUrl) })), ...zcodeCandidates().map((r) => ({ ...r, type: 'zhipu' })), ...geminiCandidates().map((r) => ({ ...r, type: 'gemini' }))],
     codexAuth: exists(path.join(HOME, '.codex', 'auth.json')),
     claudeCreds: require('./activity').detectClaudeDirs({}).map((d) => path.join(d, '.credentials.json')).filter(exists),
+    geminiCreds: exists(path.join(HOME, '.gemini', 'oauth_creds.json')),
   };
 }
 

@@ -42,6 +42,7 @@ function init() {
       GetAncestor: user32.func('void * __stdcall GetAncestor(void *hwnd, uint32 flags)'),
       SetForegroundWindow: user32.func('bool __stdcall SetForegroundWindow(void *hwnd)'),
       ShowWindow: user32.func('bool __stdcall ShowWindow(void *hwnd, int cmd)'),
+      keybd_event: user32.func('void __stdcall keybd_event(uint8 vk, uint8 scan, uint32 flags, uintptr extra)'),
     };
   } catch (e) {
     console.warn('[winsnap] koffi 不可用，仅吸附屏幕边缘:', e.message);
@@ -179,7 +180,61 @@ function focusWindow(hwndStr) {
     return !!a.SetForegroundWindow(hwnd);
   } catch (_) { return false; }
 }
+// 切到窗口并确认它真的到了前台；Windows 不让后台进程抢焦点时，按一下 Alt 解锁再试
+function bringToFront(hwndStr) {
+  const a = init(); if (!a) return false;
+  try {
+    const hwnd = koffi.as(BigInt(hwndStr), 'void *');
+    if (!a.IsWindow(hwnd)) return false;
+    if (!a.IsWindowVisible(hwnd)) a.ShowWindow(hwnd, 5 /* SW_SHOW，托盘里藏着的 */);
+    if (a.IsIconic(hwnd)) a.ShowWindow(hwnd, 9 /* SW_RESTORE */);
+    const front = () => String(koffi.address(a.GetForegroundWindow())) === String(hwndStr);
+    a.SetForegroundWindow(hwnd); if (front()) return true;
+    a.keybd_event(0x12, 0, 0, 0); a.keybd_event(0x12, 0, 2, 0);
+    a.SetForegroundWindow(hwnd); return front();
+  } catch (_) { return false; }
+}
+// 往当前前台窗口按 Ctrl+V（再按回车）
+async function pasteKeys(enter, expectedHwnd, stopped = () => false) {
+  const a = init(); if (!a) return false;
+  const stillFocused = () => !stopped() && expectedHwnd && String(koffi.address(a.GetForegroundWindow())) === String(expectedHwnd);
+  if (!stillFocused()) return false;
+  a.keybd_event(0x11, 0, 0, 0); a.keybd_event(0x56, 0, 0, 0); a.keybd_event(0x56, 0, 2, 0); a.keybd_event(0x11, 0, 2, 0);
+  if (enter) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    if (!stillFocused()) return false;
+    a.keybd_event(0x0D, 0, 0, 0); a.keybd_event(0x0D, 0, 2, 0);
+  }
+  return true;
+}
+// 原样按一下某个键（发给当前前台窗口）；Esc 仲裁时把不属于桌宠的那一下还回去
+function tapKey(vk) {
+  const a = init(); if (!a) return false;
+  try { a.keybd_event(vk, 0, 0, 0); a.keybd_event(vk, 0, 2, 0); return true; } catch (_) { return false; }
+}
 function available() { return !!init(); }
+
+// Electron 的弹出菜单是 Chromium 自绘窗口：本进程、无标题、类名 Chrome_WidgetWin_1
+// （Win32 原生菜单的 #32768 在这里恒不存在，别用它探测）。返回本进程当前开着的菜单列矩形，
+// 供交接菜单在原地重弹时定位；koffi 不可用时返回 null，调用方退化为旧行为。
+function menuWindows() {
+  const a = init(); if (!a) return null;
+  const out = [];
+  const cb = koffi.register((hwnd) => {
+    try {
+      if (!a.IsWindowVisible(hwnd)) return true;
+      const pid = [0]; a.GetWindowThreadProcessId(hwnd, pid);
+      if (pid[0] !== process.pid) return true;
+      const cbuf = ['\0'.repeat(64)]; const n = a.GetClassNameW(hwnd, cbuf, 64);
+      if (cbuf[0].slice(0, n) !== 'Chrome_WidgetWin_1') return true;
+      if (a.GetWindowTextW(hwnd, ['\0'.repeat(64)], 64) > 0) return true; // 有标题的是普通窗口
+      const r = rectOf(hwnd); if (r) out.push(r);
+    } catch (_) { /* ignore */ }
+    return true;
+  }, koffi.pointer(a.EnumWindowsProc));
+  try { a.EnumWindows(cb, 0); } finally { koffi.unregister(cb); }
+  return out;
+}
 
 // WS_VISIBLE remains set when fullscreen video covers the taskbar. Probe its actual
 // screen surface, including when the pet or a small floating window has focus.
@@ -231,4 +286,4 @@ function taskbars() {
   return failed ? null : out;
 }
 
-module.exports = { listWindows, windowRect, available, focusWindow, findWindow, foregroundWindow, titledWindows, taskbars };
+module.exports = { listWindows, windowRect, available, focusWindow, findWindow, foregroundWindow, titledWindows, taskbars, bringToFront, pasteKeys, menuWindows, tapKey };

@@ -12,10 +12,21 @@
     <div id="bubble" class="bubble">
       <svg viewBox="0 0 1026 700" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
         <path class="bshape" fill="#FFFFFF" stroke-width="18" stroke-linejoin="round" stroke-linecap="round" d="M 827 248 A 373 232 0 1 0 81 246 A 373 232 0 0 0 301 465 A 57 32 10 0 0 413 484 A 373 232 0 0 0 827 248 Z"/>
+        <ellipse class="handoff-shape" cx="454" cy="248" rx="373" ry="232" stroke-width="18"/>
         <ellipse class="b1" cx="352" cy="561" rx="37.5" ry="26" fill="#FFFFFF" stroke-width="18"/>
         <ellipse class="b2" cx="442" cy="646" rx="24.5" ry="18" fill="#FFFFFF" stroke-width="18"/>
+        <ellipse class="puff" cx="290" cy="100" rx="265" ry="92" fill="#FFFFFF" stroke-width="18"/>
       </svg>
       <img id="gif" class="gif" alt="">
+      <div id="puff-text" class="puff-text"></div>
+      <section id="handoff-content" class="handoff-content" aria-label="AI 交接进度" aria-live="polite" hidden>
+        <div id="handoff-target" class="handoff-target"></div>
+        <div id="handoff-heading" class="handoff-heading"></div>
+        <div id="handoff-detail" class="handoff-detail"></div>
+        <div id="handoff-bar" class="handoff-bar" role="progressbar" aria-label="整理进度" aria-valuemin="0" aria-valuemax="100" hidden><i></i></div>
+        <div id="handoff-steps" class="handoff-steps" aria-label="交接步骤"><i></i><i></i><i></i><i></i></div>
+        <div class="handoff-actions"><button id="handoff-copy" type="button">复制指令</button><button id="handoff-cancel" type="button">取消</button><button id="handoff-close" type="button" hidden>收起</button></div>
+      </section>
       <div id="text" class="text"><div id="l1" class="label"></div><div id="l2" class="amount"></div><div id="l3" class="hint"></div></div>
     </div>
   </div>

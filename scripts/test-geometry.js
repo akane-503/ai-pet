@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const geometry = require('../src/shared/geometry');
 const display = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1032 } };
 const bar = { displayId: 1, edge: 'bottom', visible: true, autoHide: false, rect: { left: 0, top: 1032, right: 1920, bottom: 1080 } };
+
 test('renderer and native window use bounded scale and padding on both sides', () => {
   for (const scale of [0, -1, 0.5, 1.25, 2.2, 2.4, 100, NaN, Infinity]) {
     const size = geometry.windowSize(scale);

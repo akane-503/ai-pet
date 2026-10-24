@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --line: #203170; --text: #536ba9; --hint: #7b8cb3;
   --page: color-mix(in srgb, var(--hint) 18%, #f7f5f1);
@@ -104,3 +105,8 @@ pre:empty { display: none; }
 .rss-row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* B edition first-run setup: calm, readable steps using the current character palette. */
+.setup-guide{margin:20px 0 28px;padding:24px;border:1px solid var(--line,#66547d);border-radius:16px;background:var(--card,rgba(255,255,255,.72))}.setup-guide h2{margin:0 0 10px;font-size:23px}.setup-guide p{max-width:65ch;line-height:1.7}.setup-guide label{display:flex;flex-direction:column;gap:7px;margin:12px 0}.guide-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.guide-fields input{width:100%;box-sizing:border-box}.guide-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.setup-guide [role=status]{min-height:28px;font-weight:600}.setup-guide button:disabled{opacity:.5;cursor:not-allowed}@media(max-width:720px){.guide-fields{grid-template-columns:1fr}}
+
+.setup-guide input,.setup-guide select{min-height:36px;border:1px solid var(--border);border-radius:7px;padding:6px 10px;background:var(--field);color:var(--ink);font:inherit}.guide-actions button,.guide-actions .primary{width:auto;min-height:36px;margin:0;padding:7px 14px}.guide-actions .primary{background:var(--line);color:white}.guide-actions .primary:disabled{background:var(--border);color:var(--muted)}

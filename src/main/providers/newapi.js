@@ -90,7 +90,7 @@ async function fetchSnapshot(p, ctx) {
     } catch (_) { /* ignore */ }
   }
   if (s.ok) {
-    if (s.extra.unlimited) s.lines = [`${p.name} 账户余额未知`, '今日已用由桌宠本地观测统计；填“系统访问令牌+用户ID”可看账户余额'];
+    if (s.extra.unlimited) s.lines = [`${p.name} 账户余额未知`, '接口未提供今日用量；填“系统访问令牌+用户ID”可看账户余额'];
     else s.lines = [`${p.name} 余额 ${fmtMoney(s.balance, 'USD')}`];
   }
   return s;

@@ -2,7 +2,7 @@
 (function () {
   const $ = (s) => document.querySelector(s);
   const root = $('#root'), body = $('#body'), img = $('#char-img'), bubble = $('#bubble'), gif = $('#gif');
-  const l1 = $('#l1'), l2 = $('#l2'), l3 = $('#l3'), textBox = $('#text'), menuBtn = $('#menu-btn');
+  const puffText = $('#puff-text'), l1 = $('#l1'), l2 = $('#l2'), l3 = $('#l3'), textBox = $('#text'), menuBtn = $('#menu-btn');
   const sndPress = $('#snd-press'), sndRelease = $('#snd-release');
   const ASSETS = window.pet.assetsDir;
   if (location.hash === '#left') root.classList.add('left');
@@ -12,6 +12,9 @@
   let alphaCanvas = null, alphaCtx = null, alphaBox = null;
   let pages = [], pageIdx = 0, bubbleTimer = null, bubbleMode = null, noticeQueue = [], noticeLink = null, noticeId = null;
   const seenNotices = new Set();
+  let activeNotice = null;
+  let handoffView = null;
+  const handoffContent = $('#handoff-content');
   let rollVersion = 0;
   let lastBalance = {}, readingBubble = false;
   let gifTimer = null, refreshClickTimer = null;
@@ -48,7 +51,7 @@
 
   function providerForCharacter(ch) {
     const cfgP = (data.config && data.config.providers) || [];
-    const typesFor = { deepseek: ['deepseek'], codex: ['codex'], claude: ['claude-oauth', 'newapi', 'openai'], zcode: ['zhipu'] };
+    const typesFor = { deepseek: ['deepseek'], codex: ['codex'], claude: ['claude-oauth', 'newapi', 'openai'], zcode: ['zhipu'], gemini: ['gemini'] };
     for (const t of typesFor[ch] || []) { const p = cfgP.find((x) => x.enabled && x.type === t && data.snapshots[x.id]); if (p) return p; }
     return cfgP.find((x) => x.enabled && x.character === ch && data.snapshots[x.id]) || null;
   }
@@ -193,7 +196,7 @@
       const s = data.snapshots[p.id]; if (!s) continue;
       const led = data.ledgers[p.id];
       if (!s.ok && !s.stale) { out.push({ pid: p.id, lines: [{ t: shortName(p), s: 'A' }, { t: '获取失败', s: 'S', c: '#e0433f' }, { t: (s.error || '').slice(0, 24), s: 'C' }] }); continue; }
-      if (window.PetUsage.isRelay(p)) {
+      if (window.PetUsage.isRelay(p, s)) {
         const metric = window.PetUsage.relayMetric(s, led), t = fmtMoney(metric.value, metric.currency);
         out.push({ pid: p.id, lines: [{ t: shortName(p) + ' ' + metric.label, s: 'A', w: true }, { t, s: amountStyle(t), roll: Number.isFinite(metric.value) ? metric.value : undefined, cur: metric.currency }, { t: s.stale ? '刷新失败，沿用最近值' : metric.hint, s: 'C', w: true }] });
       } else if (s.balance !== null && s.balance !== undefined) {
@@ -205,14 +208,14 @@
           out.push({ pid: p.id, lines: [{ t: `${shortName(p)} ${w.label}`, s: 'A' }, { t: `已用 ${Math.round(w.usedPercent)}%`, s: 'P', c: w.usedPercent >= (Number(p.warnPercent) || 90) ? '#e0433f' : '' }, { t: left ? `${left}后重置` : (s.plan ? String(s.plan).toUpperCase() : ''), s: 'C' }] });
         }
       }
-      if (Number.isFinite(s.granted)) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 赠送余额', s: 'A' }, { t: fmtMoney(s.granted, s.currency), s: 'P' }, { t: Number.isFinite(s.toppedUp) ? '充值余额 ' + fmtMoney(s.toppedUp, s.currency) : '', s: 'C' }] });
-      if (!window.PetUsage.isRelay(p) && Number.isFinite(s.extra && s.extra.total) && !s.extra.unlimited) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 令牌额度', s: 'A' }, { t: fmtMoney(s.extra.total, s.currency), s: 'P' }, { t: Number.isFinite(s.extra.used) ? '累计已用 ' + fmtMoney(s.extra.used, s.currency) : '', s: 'C' }] });
+      if (Number.isFinite(s.granted) && s.granted > 0) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 赠送余额', s: 'A' }, { t: fmtMoney(s.granted, s.currency), s: 'P' }, { t: Number.isFinite(s.toppedUp) ? '充值余额 ' + fmtMoney(s.toppedUp, s.currency) : '', s: 'C' }] });
+      if (!window.PetUsage.isRelay(p, s) && Number.isFinite(s.extra && s.extra.total) && !s.extra.unlimited) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 令牌额度', s: 'A' }, { t: fmtMoney(s.extra.total, s.currency), s: 'P' }, { t: Number.isFinite(s.extra.used) ? '累计已用 ' + fmtMoney(s.extra.used, s.currency) : '', s: 'C' }] });
       const updated = s.at;
       if (s.stale || s.source === 'session-log') out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 数据来源', s: 'A' }, { t: s.stale ? '刷新失败，沿用最近值' : '本地会话记录', s: 'S', w: true }, { t: updated ? new Date(updated).toLocaleTimeString() + ' 记录' : '时间未知', s: 'C' }] });
       // DeepSeek（DSH 模式）：额度后面紧跟峰谷时段页
       if (p.type === 'deepseek' && character === 'deepseek') { const pk = peakPage(); if (pk) out.push(pk); }
     }
-    if (!out.length) out.push({ lines: [{ t: '当前工具暂无额度数据', s: 'A', w: true }, { t: '右键 → 设置', s: 'S' }, { t: '配置对应数据源后显示', s: 'C', w: true }] });
+    if (!out.length) out.push({ lines: [{ t: '当前工具暂无额度数据', s: 'A', w: true }, { t: '≡ 面板 → 设置', s: 'S' }, { t: '配置对应数据源后显示', s: 'C', w: true }] });
     return out;
   }
   function randomLines() {
@@ -240,8 +243,12 @@
   }
   function showBubble({ random = false, headpat = false } = {}) {
     const ap = data.config.appearance; if (!ap.bubbleOn) return;
+    if (handoffView && !handoffView.done) { renderHandoff(handoffView); return; }
+    if (handoffView) hideBubble();
+    leaveHandoff();
+    if (bubble.classList.contains('compact')) return;
     if (bubbleMode === 'notice' || noticeQueue.length) { drainNotices(); return; }
-    clearTimeout(bubbleTimer); bubble.classList.remove('notice');
+    clearTimeout(bubbleTimer); bubble.classList.remove('notice', 'compact');
     pages = buildPages(); pageIdx = 0; bubbleMode = random || headpat ? 'random' : 'info';
     if (headpat) setLines({ gif: true }); else if (random) setLines(randomLines()); else renderPage(false);
     bubble.classList.add('open');
@@ -255,21 +262,26 @@
     bubbleTimer = setTimeout(hideBubble, bubbleMode === 'notice' ? 15000 : (Number(ap.bubbleSeconds) || 5) * 1000);
   }
   function hideBubble() {
+    leaveHandoff();
     clearTimeout(bubbleTimer); bubbleTimer = null;
     clearTimeout(gifTimer); gifTimer = null; gif.style.display = 'none'; gif.removeAttribute('src'); readingBubble = false;
     rollVersion++;
-    bubble.classList.remove('open'); bubbleMode = null; noticeLink = null; noticeId = null;
+    bubble.classList.remove('open', 'compact'); bubbleMode = null; noticeLink = null; noticeId = null;
+    bubble.title = ''; l2.title = ''; l3.title = '';
+    activeNotice = null;
     setTimeout(drainNotices, 400);
   }
   function bubbleClick() {
+    if (handoffView) return;
     if (bubbleMode === 'notice') { if (noticeLink) window.pet.send('open-external', noticeLink); if (noticeId) window.pet.send('notification:read', noticeId); hideBubble(); return; }
     if (bubbleMode === 'info' && pageIdx < pages.length - 1) { pageIdx++; renderPage(true); armBubbleTimer(); return; }
     if (bubbleMode === 'info' && data.config.appearance.quipsOn) { bubbleMode = 'random'; setLines(randomLines(), { fade: true }); armBubbleTimer(); return; }
     pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(true); armBubbleTimer();
   }
   function showNotice(n) {
+    activeNotice = n;
     clearTimeout(bubbleTimer);
-    bubble.classList.add('notice');
+    bubble.classList.remove('compact'); bubble.classList.add('notice');
     const body = String(n.body || '');
     const title = String(n.title || '').replace(/^[🎁💰⏰⚠️⛔🆕📣📰]+\s*/u, '');
     const lines = [{ t: title, s: 'A', w: true }, { t: body, s: 'S', w: true }, { t: n.link ? '点击查看 · 右键收起' : '点击收起 · 消息中心可回看', s: 'C', w: true }];
@@ -281,11 +293,11 @@
   function drainNotices() { if (noticeQueue.length && !bubble.classList.contains('open')) showNotice(noticeQueue.shift()); }
 
   // ---------- 鼠标穿透 ----------
-  let ignoring = null, pressing = false, dragging = false, start = null, pressAt = 0;
+  let ignoring = null, pressing = false, rpress = false, dragging = false, start = null, pressAt = 0;
   function hitTest(e) {
     const t = e.target; if (!t || !t.closest) return false;
     if (t.closest('#menu-btn')) return true;
-    if (bubble.classList.contains('open') && t.closest('#bubble') && (t.tagName === 'path' || t.tagName === 'ellipse' || t.closest('#text'))) return true;
+    if (bubble.classList.contains('open') && t.closest('#bubble') && (t.tagName === 'path' || t.tagName === 'ellipse' || t.closest('#text') || t.closest('#handoff-content'))) return true;
     const r = img.getBoundingClientRect();
     if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) return false;
     if (!alphaCtx) return true;
@@ -306,8 +318,30 @@
   });
   document.addEventListener('mouseleave', () => root.classList.remove('hover'));
 
+  // 菜单固定贴在桌宠身体上 1/4 高度那一行的实际边缘；右边放不下由主进程改放左边
+  const menuAnchor = () => {
+    const r = img.getBoundingClientRect();
+    if (!alphaBox || !img.naturalWidth) return { x: r.right, y: r.top + r.height / 4, left: r.left };
+    const chub = Number(getComputedStyle(document.documentElement).getPropertyValue('--chub')) || 1;
+    const s = Math.min((r.width / chub) / img.naturalWidth, r.height / img.naturalHeight), sx = s * chub;
+    const ox = r.left + (r.width - img.naturalWidth * sx) / 2, oy = r.bottom - img.naturalHeight * s;
+    const flip = root.classList.contains('left'), W = img.naturalWidth;
+    // 图片包围盒常常撑满整宽，取锚点那一行真实不透明像素的左右边
+    const ay = Math.floor(alphaBox.y0 + (alphaBox.y1 - alphaBox.y0) / 4);
+    let a0 = alphaBox.x0, a1 = alphaBox.x1;
+    try {
+      const d = alphaCtx.getImageData(0, ay, W, 1).data; let l = -1, rr = -1;
+      for (let i = 0; i < W; i++) if (d[i * 4 + 3] > 24) { if (l < 0) l = i; rr = i + 1; }
+      if (l >= 0) { a0 = l; a1 = rr; }
+    } catch (_) {}
+    const x0 = flip ? W - a1 : a0, x1 = flip ? W - a0 : a1;
+    return { x: ox + x1 * sx, y: oy + ay * s, left: ox + x0 * sx };
+  };
   document.addEventListener('pointerdown', (e) => {
-    if (e.button === 2 || e.target.closest('#menu-btn')) return;
+    // 右键和左键同一套手感：按下压扁+音效并让主进程先备好菜单，松开才弹
+    if (e.button === 2) { if (!e.target.closest('#bubble') && hitTest(e)) { rpress = true; pressAt = Date.now(); e.target.setPointerCapture(e.pointerId); body.classList.add('pressed'); root.classList.remove('idle'); playSound('press'); window.pet.send('menu:prepare'); } return; }
+    if (e.target.closest('#menu-btn')) return;
+    if (e.target.closest('#handoff-content')) return;
     if (e.target.closest('#bubble') && bubble.classList.contains('open')) { if (!(bubbleMode === 'notice' && e.target.closest('#text'))) bubbleClick(); return; }
     if (!hitTest(e)) return;
     pressing = true; dragging = false; start = { x: e.screenX, y: e.screenY }; pressAt = Date.now();
@@ -335,8 +369,14 @@
     }
   };
   document.addEventListener('pointerup', endPress); document.addEventListener('pointercancel', endPress);
+  document.addEventListener('pointerup', (e) => {
+    if (e.button !== 2 || !rpress) return; rpress = false;
+    body.classList.remove('pressed'); root.classList.add('idle');
+    const held = Date.now() - pressAt; setTimeout(() => playSound('release'), held < 350 ? Math.max(0, 250 - held) : 0);
+    window.pet.send('context-menu', menuAnchor());
+  });
   document.addEventListener('dblclick', (e) => { if (hitTest(e) && !e.target.closest('#bubble')) { clearTimeout(refreshClickTimer); refreshClickTimer = null; window.pet.send('launch'); } });
-  document.addEventListener('contextmenu', (e) => { e.preventDefault(); if (e.target.closest('#bubble') && bubble.classList.contains('open')) { hideBubble(); return; } if (hitTest(e)) window.pet.send('context-menu'); });
+  document.addEventListener('contextmenu', (e) => { e.preventDefault(); if (handoffView && e.target.closest('#bubble')) { window.pet.send('context-menu', menuAnchor()); return; } if (e.target.closest('#bubble') && bubble.classList.contains('open')) hideBubble(); });
   menuBtn.addEventListener('click', (e) => { e.stopPropagation(); window.pet.send('panel:toggle'); });
 
   function playSound(kind) {
@@ -361,6 +401,7 @@
     applyCharacter(d.character); applyColors(); applyMood();
     if (!ap.bubbleOn && bubble.classList.contains('open')) hideBubble();
     else if (bubbleMode === 'info') { const keep = prevCharacter === character ? pageIdx : 0; pages = buildPages(); pageIdx = Math.min(keep, pages.length - 1); renderPage(false); }
+    if (bubble.classList.contains('compact')) fitCompact();
     setTimeout(reportBox, 80);
   });
   window.pet.on('notify', (n) => { if (n.id && seenNotices.has(n.id)) return; if (n.id) seenNotices.add(n.id); noticeQueue.push(n); drainNotices(); });
@@ -369,22 +410,73 @@
   setInterval(() => { if (bubbleMode === 'info') { pages = buildPages(); pageIdx = Math.min(pageIdx, pages.length - 1); renderPage(false); } }, 30000);
   textBox.addEventListener('click', () => { if (bubbleMode === 'notice') bubbleClick(); });
   window.pet.on('snap', (s) => setFlip(!!s.flip));
-  function say(lines, seconds, restoreInfo = false) {
-    if (bubbleMode === 'notice' || noticeQueue.length) return;
-    clearTimeout(bubbleTimer); bubble.classList.remove('notice');
+  // compact：交接进度。第一行进左上角小云朵，其余两行进大气泡
+  function fitCompact() {
+    bubble.classList.remove('dense');
+    const unit = root.offsetWidth / 1026;
+    if (textBox.offsetHeight > unit * 260) bubble.classList.add('dense');
+  }
+  function say(lines, seconds, restoreInfo = false, compact = false) {
+    if (handoffView || (!compact && (bubbleMode === 'notice' || noticeQueue.length || bubble.classList.contains('compact')))) return;
+    if (compact && bubbleMode === 'notice' && activeNotice) {
+      noticeQueue.unshift(activeNotice); activeNotice = null; noticeId = null; noticeLink = null;
+    }
+    clearTimeout(bubbleTimer); bubble.classList.remove('notice'); bubble.classList.toggle('compact', !!compact);
+    if (compact) { puffText.textContent = lines[0] ? lines[0].t : ''; puffText.title = puffText.textContent; lines = [null, lines[1], lines[2]]; }
     setLines(lines, { fade: bubble.classList.contains('open') }); bubbleMode = 'status'; bubble.classList.add('open');
+    if (compact) { l2.title = l2.textContent; l3.title = l3.textContent; bubble.title = [puffText.textContent, l2.textContent, l3.textContent].join('\n'); fitCompact(); }
     bubbleTimer = setTimeout(() => {
+      bubble.title = ''; l2.title = ''; l3.title = '';
+      if (noticeQueue.length) { hideBubble(); return; }
       if (!restoreInfo) { hideBubble(); return; }
-      pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(false); armBubbleTimer();
+      bubble.classList.remove('compact'); pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(false); armBubbleTimer();
     }, (seconds || 3) * 1000);
   }
   // 闲置时隔一阵随口说一句（不打断已打开的气泡）
+  function leaveHandoff() {
+    handoffView = null; handoffContent.hidden = true; bubble.classList.remove('handoff');
+  }
+  function renderHandoff(view) {
+    if (activeNotice) { noticeQueue.unshift(activeNotice); activeNotice = null; noticeId = null; noticeLink = null; }
+    const changed = !handoffView || handoffView.heading !== view.heading;
+    handoffView = view;
+    clearTimeout(bubbleTimer); clearTimeout(gifTimer); gifTimer = null;
+    gif.style.display = 'none'; gif.removeAttribute('src');
+    bubble.classList.remove('notice', 'compact'); bubble.classList.add('handoff', 'open');
+    bubbleMode = 'status'; handoffContent.hidden = false;
+    puffText.textContent = '';
+    puffText.title = '';
+    $('#handoff-target').textContent = `${view.done ? '' : `${view.step}/4 · `}交给 ${view.target}`;
+    $('#handoff-target').title = view.target;
+    $('#handoff-heading').textContent = view.heading;
+    $('#handoff-detail').textContent = view.detail;
+    const bar = $('#handoff-bar'), pct = typeof view.progress === 'number' ? Math.round(view.progress * 100) : null;
+    bar.hidden = pct === null;
+    if (pct !== null) { bar.firstElementChild.style.width = pct + '%'; bar.setAttribute('aria-valuenow', pct); }
+    handoffContent.title = [view.target, view.detail, view.project ? `工作区：${view.project}` : ''].filter(Boolean).join('\n');
+    $('#handoff-copy').disabled = !view.canCopy;
+    $('#handoff-copy').textContent = view.manualSource ? '复制给原 AI' : '复制指令';
+    $('#handoff-cancel').hidden = !!view.done;
+    $('#handoff-close').hidden = !view.done;
+    const dots = $('#handoff-steps').children;
+    for (let i = 0; i < dots.length; i++) { dots[i].className = view.steps[i] === 'ok' || view.steps[i] === 'skip' ? 'done' : !view.done && i === view.step - 1 ? 'current' : ''; }
+    $('#handoff-steps').setAttribute('aria-label', `第 ${view.step} 步，共 4 步`);
+    if (changed) { handoffContent.classList.remove('changed'); void handoffContent.offsetWidth; handoffContent.classList.add('changed'); }
+    if (view.done) bubbleTimer = setTimeout(() => { if (handoffView && handoffView.id === view.id) hideBubble(); }, view.autoCloseMs || 18000);
+  }
+  for (const action of ['copy', 'cancel', 'close']) $('#handoff-' + action).addEventListener('click', (e) => {
+    e.stopPropagation(); if (!handoffView) return;
+    if (action === 'close') hideBubble();
+    window.pet.send('handoff:action', { action, id: handoffView.id });
+    if (action === 'copy') { $('#handoff-copy').textContent = '已复制'; }
+  });
+  window.pet.on('handoff', renderHandoff);
   (function idleLoop() {
     const ap = data.config && data.config.appearance; const min = ap ? Number(ap.idleQuipMin) : 6;
     const wait = (min > 0 ? min : 6) * 60000 * (0.7 + Math.random() * 0.8);
     setTimeout(() => { const a = data.config && data.config.appearance; if (a && a.quipsOn && Number(a.idleQuipMin) > 0 && !bubble.classList.contains('open') && !pressing) showBubble({ random: true }); idleLoop(); }, wait);
   })();
-  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds, c.restoreInfo); else if (c.name === 'bubble') showBubble(); else if (c.name === 'headpat') showBubble({ headpat: true }); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
+  window.pet.on('cmd', (c) => { if (c.name === 'say') say(c.lines, c.seconds, c.restoreInfo, c.compact); else if (c.name === 'bubble') showBubble(); else if (c.name === 'headpat') showBubble({ headpat: true }); else if (c.name === 'random') showBubble({ random: true }); else if (c.name === 'page') bubbleClick(); else if (c.name === 'hide') hideBubble(); else if (c.name === 'menu-open') root.classList.toggle('menu-open', !!c.on); });
   window.addEventListener('resize', () => setTimeout(reportBox, 50));
   window.__dbgPages = () => ({ active: data.activeProviders, pages: buildPages().map((p) => p.lines.filter(Boolean).map((l) => l.t)) });
   window.pet.send('pet:ready');

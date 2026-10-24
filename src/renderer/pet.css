@@ -36,10 +36,56 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .hint { font-size: calc(var(--u) * 56); color: var(--hint); letter-spacing: .02em; margin-top: calc(var(--u) * 9); min-height: calc(var(--u) * 64); line-height: 1.15; }
 .wrap { white-space: normal; max-width: calc(var(--u) * 600); line-height: 1.2; }
 .bubble.notice .text { color: var(--text); width: 61%; top: 36%; max-height: 51%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; pointer-events: auto; cursor: pointer; overscroll-behavior: contain; }
-.bubble.notice .label { font-size: max(11px, calc(var(--u) * 43)); letter-spacing: 0; line-height: 1.25; }
-.bubble.notice .amount { font-size: max(11px, calc(var(--u) * 39)); font-weight: 600; line-height: 1.35; margin-top: calc(var(--u) * 12); }
-.bubble.notice .hint { color: var(--hint); font-size: max(10px, calc(var(--u) * 31)); min-height: 0; line-height: 1.25; }
-.bubble.notice .wrap { max-width: none; overflow-wrap: anywhere; }
+/* compact（交接进度）：大气泡左上角长出一个小云朵，小云朵写"交接 → 目标"，大气泡写进度 */
+.bubble .puff { stroke: var(--line); opacity: 0; transform: scale(.7); transform-box: fill-box; transform-origin: 50% 100%; transition: opacity .2s ease, transform .2s ease; }
+.bubble:not(.compact) .puff { pointer-events: none; }
+.bubble.open.compact .puff { opacity: 1; transform: none; transition-delay: .4s; }
+.puff-text { position: absolute; left: 28.27%; top: 14.29%; transform: translate(-50%, -50%); width: calc(var(--u) * 450); text-align: center; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--u) * 44); font-weight: 700; color: var(--text); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .16s ease; }
+.bubble.open.compact .puff-text { opacity: 1; transition-delay: .55s; }
+.root.left .puff-text { transform: translate(-50%, -50%) scaleX(-1); }
+.bubble.compact .text { width: 61%; top: 47%; white-space: normal; }
+.bubble.notice .label, .bubble.compact .label { font-size: max(11px, calc(var(--u) * 43)); letter-spacing: 0; line-height: 1.25; }
+.bubble.notice .amount, .bubble.compact .amount { font-size: max(11px, calc(var(--u) * 39)); font-weight: 600; line-height: 1.35; margin-top: calc(var(--u) * 12); }
+.bubble.notice .hint, .bubble.compact .hint { color: var(--hint); font-size: max(10px, calc(var(--u) * 31)); min-height: 0; line-height: 1.25; }
+.bubble.notice .wrap, .bubble.compact .wrap { max-width: none; overflow-wrap: anywhere; }
+.bubble.compact .label { font-size: calc(var(--u) * 62); }
+.bubble.compact .amount { font-size: calc(var(--u) * 72); font-weight: 800; margin-top: calc(var(--u) * 8); }
+.bubble.compact .hint { font-size: calc(var(--u) * 52); }
+.bubble.compact .amount, .bubble.compact .hint { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.bubble.compact .amount { line-height: 1.18; }
+.bubble.compact .hint { line-height: 1.2; }
+.bubble.compact.dense .amount { font-size: calc(var(--u) * 56); }
+.bubble.compact.dense .hint { font-size: calc(var(--u) * 44); }
+/* 交接沿用聊天气泡轮廓与角色色，文字和操作有自己的布局。 */
+.handoff-shape { display: none; fill: #fff; stroke: var(--line); }
+.handoff-content[hidden], .handoff-actions button[hidden] { display: none; }
+.bubble.handoff .bshape, .bubble.handoff #text, .bubble.handoff #gif { display: none; }
+.bubble.handoff .handoff-shape { display: block; transform-box: fill-box; transform-origin: center; animation: handoff-cloud .25s ease-out; }
+@keyframes handoff-cloud { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: none; } }
+.bubble.handoff .puff { display: none; }
+.bubble.handoff .puff-text { display: none; }
+.handoff-content { position: absolute; left: 44.25%; top: 35.43%; width: 60%; display: flex; flex-direction: column; gap: calc(var(--u) * 14); transform: translate(-50%, -50%); color: var(--text); text-align: center; pointer-events: auto; cursor: default; }
+.root.left .handoff-content { transform: translate(-50%, -50%) scaleX(-1); }
+.handoff-target { font-size: calc(var(--u) * 38); font-weight: 500; opacity: .75; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.25; }
+.handoff-heading { font-size: calc(var(--u) * 66); font-weight: 700; line-height: 1.25; margin: 0; white-space: nowrap; }
+.handoff-detail { font-size: calc(var(--u) * 40); line-height: 1.3; margin: 0; max-width: 100%; white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.handoff-bar { width: 70%; height: calc(var(--u) * 12); margin: calc(var(--u) * 4) auto 0; border-radius: 99px; overflow: hidden; background: color-mix(in srgb, var(--line) 18%, white); }
+.handoff-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--line); transition: width 0.9s linear; }
+.handoff-steps { display: flex; justify-content: center; gap: calc(var(--u) * 16); margin: calc(var(--u) * 9) 0 calc(var(--u) * 14); }
+.handoff-steps i { width: calc(var(--u) * 72); height: calc(var(--u) * 9); border-radius: 99px; background: color-mix(in srgb, var(--line) 16%, white); }
+.handoff-steps i.done { background: var(--line); }
+.handoff-steps i.current { background: var(--text); animation: handoff-pulse 1.8s ease-in-out infinite; }
+@keyframes handoff-pulse { 50% { opacity: .35; } }
+.handoff-actions { display: flex; justify-content: center; gap: calc(var(--u) * 20); }
+.bubble.handoff .handoff-actions, .bubble.handoff .handoff-steps { display: none; }
+.handoff-actions button { border: 0; border-radius: 999px; padding: calc(var(--u) * 9) calc(var(--u) * 25); color: var(--text); background: color-mix(in srgb, var(--line) 9%, white); font: 600 calc(var(--u) * 36)/1.25 "Microsoft YaHei UI", sans-serif; cursor: pointer; transition: background .15s, transform .15s; }
+.handoff-actions button:first-child { color: white; background: var(--line); }
+.handoff-actions button:hover { transform: translateY(-1px); filter: brightness(1.12); }
+.handoff-actions button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }
+.handoff-actions button:disabled { opacity: .45; cursor: default; }
+.bubble.handoff .handoff-content.changed { animation: handoff-in .2s ease-out; }
+@keyframes handoff-in { from { opacity: .45; margin-top: 3px; } to { opacity: 1; margin-top: 0; } }
+@media (prefers-reduced-motion: reduce) { .handoff-steps i.current, .bubble.handoff .handoff-content.changed, .bubble.handoff .handoff-shape { animation: none; } }
 .gif { position: absolute; left: 44.25%; top: 38%; transform: translate(-50%, -50%); width: 46%; display: none; pointer-events: none; }
 .root.left .gif { transform: translate(-50%, -50%) scaleX(-1); }
 

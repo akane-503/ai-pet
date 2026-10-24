@@ -56,7 +56,30 @@ function detectClaudeDirs(cfg) {
     const cc = JSON.parse(readText(path.join(home, '.cc-switch', 'settings.json')));
     if (cc && cc.claudeConfigDir) out.push(cc.claudeConfigDir);
   } catch (_) { /* */ }
+  out.push(...wslClaudeDirs());
   return Array.from(new Set(out.filter(Boolean)));
+}
+
+// WSL 里的 Claude Code：注册表列发行版，再找 \\wsl.localhost\<发行版>\home\*\.claude
+// shortcut: 每次运行只探测一次，新装发行版/新建用户要重启桌宠才认
+let wslDirs = null;
+function wslDistros(regOut) {
+  return [...String(regOut).matchAll(/DistributionName\s+REG_SZ\s+(.+?)\s*$/gm)].map((m) => m[1]);
+}
+function wslClaudeDirs() {
+  if (wslDirs) return wslDirs;
+  wslDirs = [];
+  if (process.platform !== 'win32') return wslDirs;
+  try {
+    const reg = require('child_process').execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss', '/s', '/v', 'DistributionName'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    for (const distro of wslDistros(reg)) {
+      const homeDir = `\\\\wsl.localhost\\${distro}\\home`;
+      let users = [];
+      try { users = fs.readdirSync(homeDir); } catch (_) { continue; }
+      for (const u of users) { const d = path.join(homeDir, u, '.claude'); if (statMtime(d)) wslDirs.push(d); }
+    }
+  } catch (_) { /* 没装 WSL */ }
+  return wslDirs;
 }
 
 function detect(cfg, providers, agents = []) {
@@ -172,12 +195,12 @@ function claudeRoute(cfg) {
 // 前台和用户最近的选择优先，防止后台日志/定时任务抢角色。
 function selectCharacter({ appearance, foreground = {}, recent = {}, activity = {}, now = Date.now(), charOf = (k) => k }) {
   if (appearance.character && appearance.character !== 'auto') return { character: appearance.character, why: '手动指定' };
-  if (foreground.character && now - foreground.at < 3000) return { character: foreground.character, why: `前台是 ${foreground.character}` };
-  if (recent.character && now - recent.at < 10000) return { character: recent.character, why: `最近${recent.reason === 'launch' ? '打开' : '用过'} ${recent.character}` };
+  if (foreground.character && now - foreground.at < 3000) return { character: foreground.character, why: `前台是 ${foreground.label || foreground.character}` };
+  if (recent.character && now - recent.at < 10000) return { character: recent.character, why: `最近${recent.reason === 'launch' ? '打开' : '用过'} ${recent.label || recent.character}` };
   const working = Object.entries(activity.details || {}).filter(([, t]) => now - t >= 0 && now - t < 90000).sort((a, b) => b[1] - a[1]);
   for (const [key] of working) { const character = charOf(key); if (character) return { character, why: `${key} 正在干活` }; }
   if (recent.character && now - recent.at < 10 * 60000) return { character: recent.character, why: `最近用过 ${recent.character}` };
   if (activity.active) { const character = charOf(activity.active); if (character) return { character, why: `最近活跃 ${activity.active}` }; }
   return { character: appearance.favorite || 'deepseek', why: '空闲，回落角色' };
 }
-module.exports = { detect, detectClaudeDirs, characterForTitle, characterForWindow, routeForWindow, codexRoute, claudeRoute, selectCharacter, WINDOW_RULES };
+module.exports = { detect, detectClaudeDirs, wslDistros, characterForTitle, characterForWindow, routeForWindow, codexRoute, claudeRoute, selectCharacter, WINDOW_RULES };

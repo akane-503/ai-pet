@@ -21,7 +21,7 @@
 <main>
   <section id="tab-providers" class="tab">
     <h1>数据源</h1>
-    <p class="hint">每个数据源对应一个额度来源。余额类（DeepSeek / 中转站）显示金额，窗口类（Codex / GLM / Claude 订阅）显示 5 小时 / 7 天用量。所有凭据只存在本机 <code id="userdata"></code>。</p>
+    <p class="hint">每个数据源对应一个额度来源。余额类（DeepSeek / 中转站）显示金额，窗口类（Codex / GLM / Claude 订阅 / Gemini CLI）显示窗口用量。Gemini CLI 会自动读 ~/.gemini：有中转站地址就按中转站计费显示，没地址就按官方登录查配额。所有凭据只存在本机 <code id="userdata"></code>。</p>
     <div class="toolbar">
       <select id="add-type"></select><button id="add-provider">＋ 添加</button>
       <button id="scan">扫描本机凭据</button>
@@ -146,6 +146,7 @@
   </section>
 </main>
 <script src="../shared/usage.js"></script>
+<script src="onboarding.js"></script>
 <script src="settings.js"></script>
 </body>
 </html>

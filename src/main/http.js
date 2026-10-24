@@ -17,13 +17,18 @@ async function request(url, { method = 'GET', headers = {}, body, timeoutMs = 20
 
 // 带一次重试（网络错误 / 5xx）
 async function requestRetry(url, opts = {}) {
+  let networkFailure = false;
   try {
-    const r = await request(url, opts);
+    let r;
+    try { r = await request(url, opts); } catch (e) { networkFailure = true; throw e; }
     if (r.status >= 500) throw new Error('HTTP ' + r.status);
     return r;
   } catch (e) {
     await new Promise((r) => setTimeout(r, 600));
-    return request(url, opts);
+    // Chromium 网络栈/系统代理失败时，安全的只读查询尝试 Node 网络栈。
+    // POST 等请求不自动换栈重放，避免重复提交或重复计费。
+    const safe = /^(GET|HEAD)$/i.test(opts.method || 'GET');
+    return request(url, networkFailure && safe && !opts.useNode ? { ...opts, useNode: true } : opts);
   }
 }
 
