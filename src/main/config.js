@@ -48,6 +48,7 @@ function defaultConfig() {
       { id: 'relay', type: 'newapi', name: '中转站', enabled: false, baseUrl: '', apiKey: '', accessToken: '', userId: '', lowBalance: 1, character: 'claude', announcements: true },
       { id: 'zhipu', type: 'zhipu', name: 'GLM Coding Plan', enabled: false, baseUrl: 'https://open.bigmodel.cn', apiKey: '', warnPercent: 90, character: 'zcode' },
       { id: 'claude-oauth', type: 'claude-oauth', name: 'Claude 订阅', enabled: false, credentialsPath: path.join(WIN_HOME, '.claude', '.credentials.json'), warnPercent: 90, character: 'claude' },
+      { id: 'gemini', type: 'gemini', name: 'Gemini CLI', enabled: false, baseUrl: '', apiKey: '', accessToken: '', userId: '', credentialsPath: path.join(WIN_HOME, '.gemini', 'oauth_creds.json'), project: '', auth: 'auto', warnPercent: 90, character: 'gemini' },
     ],
     notify: {
       toast: false, bubble: true, sound: false,
@@ -70,6 +71,7 @@ function defaultConfig() {
     layout: { x: null, y: null, snapped: null },
     autostart: false,
     firstRunDone: false,
+    quotaOnboardingDone: false,
   };
 }
 
@@ -130,6 +132,8 @@ class JsonStore {
 
 function defaultState() {
   return {
+    handoffReturns: [],   // project/tool -> original local session reference; no transcript text
+    handoffTimings: [],   // completed request durations/workload only, no conversation contents
     snapshots: {},        // providerId -> 最近一次成功结果
     ledgers: {},          // providerId -> { date, lastBalance, lastCurrency, todayUsage, history[] }
     models: {},           // providerId -> [model ids]

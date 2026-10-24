@@ -18,6 +18,9 @@ test('release allowlist has assets and launcher but excludes history and private
   assert.ok(files.includes('assets/characters/zcode.png'));
   assert.ok(files.includes('scripts/start.ps1'));
   assert.ok(files.includes('src/main/smoke-test.js'));
+  // 交接用的两个技能要跟着源码包一起发，否则新机器上「用 takeover 技能接手」会落空
+  assert.ok(files.includes('skills/handoff/SKILL.md'));
+  assert.ok(files.includes('skills/takeover/SKILL.md'));
   assert.equal(scanRelease(root, files).credentialsFound, false);
 });
 test('release scan blocks real-looking tokens and local paths without echoing their values', t => {

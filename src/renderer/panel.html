@@ -22,11 +22,12 @@ html, body { margin: 0; background: transparent; font-family: "Microsoft YaHei U
 input[type=checkbox] { accent-color: var(--line); margin: 0; }
 .toggles { display: grid; grid-template-columns: repeat(4, auto); justify-content: space-between; gap: 4px; margin: 8px 0 2px; }
 .toggles label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-.btns { display: flex; gap: 6px; margin-top: 10px; }
-.btns button { flex: 1; height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--hint) 70%, white); border-radius: 7px; background: #fff; color: var(--line); font: inherit; cursor: pointer; transition: background .15s, color .15s; }
+/* 「打开 xxx」单独占一行：工具名常带版本/环境后缀，和别人挤一行会被截成「打开 Cursor…」 */
+.btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.btns button { flex: 1; min-width: 0; height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--hint) 70%, white); border-radius: 7px; background: #fff; color: var(--line); font: inherit; cursor: pointer; transition: background .15s, color .15s; }
 .btns button:hover { background: var(--soft); }
 .btns button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
-.btns #launch-btn { flex: 2; background: var(--line); border-color: var(--line); color: #fff; font-weight: 700; }
+.btns #launch-btn { flex: 1 0 100%; background: var(--line); border-color: var(--line); color: #fff; font-weight: 700; }
 .btns #launch-btn:hover { background: color-mix(in srgb, var(--line) 85%, black); }
 .btns button.quit { color: #d93d3a; flex: 0 0 auto; border-color: transparent; }
 .btns button.quit:hover { background: #fdecec; }

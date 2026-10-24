@@ -1,7 +1,7 @@
 {
   "name": "ai-pet",
   "productName": "AI 桌宠",
-  "version": "1.0.3",
+  "version": "1.1.8",
   "description": "AI 额度桌宠：DeepSeek / Codex / 中转站 / GLM 额度显示 + 模型提示器",
   "main": "src/main/main.js",
   "private": true,
@@ -12,15 +12,69 @@
   "scripts": {
     "start": "electron .",
     "pack": "node scripts/pack.js",
-    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js"
+    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js",
+    "dist": "electron-builder --win nsis",
+    "postdist": "node scripts/installer-latest.js",
+    "dist:editions": "node scripts/build-editions.js"
   },
   "dependencies": {
     "koffi": "^3.3.2"
   },
   "devDependencies": {
-    "electron": "^44.4.5"
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
   },
   "allowScripts": {
     "koffi@3.3.2": true
+  },
+  "build": {
+    "appId": "com.akane503.aipet",
+    "productName": "AI 桌宠",
+    "executableName": "AI桌宠",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "dist/installer",
+      "buildResources": "build"
+    },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "asarUnpack": [
+      "src/main/dsh-draft.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills"
+      }
+    ],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "AI 桌宠",
+      "installerIcon": "assets/app.ico",
+      "uninstallerIcon": "assets/app.ico",
+      "include": "build/installer.nsh",
+      "artifactName": "AI桌宠-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

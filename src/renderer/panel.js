@@ -26,7 +26,16 @@
     $('[data-cfg=scale]').value = ap.scale; $('#scale-val').textContent = Math.round(ap.scale * 100) + '%';
     $('[data-cfg=sound]').value = ap.sound; $('[data-cfg=volume]').value = ap.volume; $('[data-cfg=peakMode]').value = ap.peakMode;
     for (const k of ['bubbleOn', 'quipsOn', 'snapWindows', 'alwaysOnTop']) $(`[data-cfg=${k}]`).checked = !!ap[k];
-    const lb = $('#launch-btn'); if (lb) lb.textContent = d.launchLabel ? '打开 ' + d.launchLabel : '打开工具';
+    // 启动按钮独占一行，正常长度都能完整显示；名字特别长时先省掉「打开」，再不行才省略号 + 悬停看全称
+    const lb = $('#launch-btn');
+    if (lb) {
+      lb.hidden = !!d.quotaOnly;
+      lb.style.display = d.quotaOnly ? 'none' : '';
+      const name = d.launchLabel || '工具';
+      lb.textContent = '打开 ' + name;
+      if (lb.scrollWidth > lb.clientWidth) lb.textContent = name;
+      lb.title = '打开 ' + name + '（双击角色也可以）';
+    }
     // 内容高度上报，主进程据此调整窗口高度
     requestAnimationFrame(() => { const panel = document.querySelector('.panel'); window.pet.send('panel:size', { h: Math.ceil(panel.scrollHeight) + 16 }); });
   }

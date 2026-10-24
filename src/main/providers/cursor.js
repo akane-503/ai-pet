@@ -2,6 +2,7 @@
 // Cursor 本月用量：读本机登录 token，调 cursor.com 的 usage-summary（非公开接口，格式可能变）
 const path = require('path');
 const { base, num, toEpochSec, fmtCountdown } = require('./util');
+const cursorModel = require('../cursor-model');
 
 const DB = path.join(process.env.APPDATA || '', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
 
@@ -43,9 +44,13 @@ async function fetchSnapshot(p) {
   const u = parseUsage(r.data);
   if (!u.windows.length) { s.error = '接口无用量字段'; return s; }
   Object.assign(s, { ok: true, windows: u.windows, plan: u.plan });
+  // Cursor 是多模型 IDE：把当前 composer 的模型也写进快照，气泡里能看出「这个额度在用哪个模型」
+  const cur = cursorModel.info(p.dbPath || DB);
+  if (cur && cur.ok) { s.extra.model = cur.model || null; s.extra.modelLabel = cur.label || null; s.extra.modelCharacter = cur.character || null; s.extra.modelAuto = !!cur.auto; }
   s.fraction = 1 - u.windows[0].usedPercent / 100;
   const now = Date.now() / 1000;
-  s.lines = [`Cursor ${u.plan || ''}`.trim(), ...u.windows.map((w) => `${w.label}已用 ${Math.round(w.usedPercent)}%` + (w.resetsAt ? ` · ${fmtCountdown(w.resetsAt - now)}后重置` : ''))];
+  const modelTag = cur && cur.ok && cur.label ? ` · ${cur.label}` : '';
+  s.lines = [`Cursor ${u.plan || ''}${modelTag}`.replace(/\s+/g, ' ').trim(), ...u.windows.map((w) => `${w.label}已用 ${Math.round(w.usedPercent)}%` + (w.resetsAt ? ` · ${fmtCountdown(w.resetsAt - now)}后重置` : ''))];
   if (u.auto !== null || u.api !== null) s.lines.push(`Auto ${Math.round(u.auto || 0)}% · API ${Math.round(u.api || 0)}%`);
   return s;
 }

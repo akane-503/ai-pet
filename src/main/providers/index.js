@@ -4,6 +4,7 @@ const impls = {
   codex: require('./codex'),
   newapi: require('./newapi'),
   openai: require('./newapi'),
+  gemini: require('./gemini'),
   zhipu: require('./zhipu'),
   'claude-oauth': require('./claude-oauth'),
   cursor: require('./cursor'),
@@ -14,9 +15,10 @@ const TYPE_META = {
   deepseek: { label: 'DeepSeek 官方', fields: ['apiKey', 'lowBalance'], kind: 'balance', defaultCharacter: 'deepseek' },
   codex: { label: 'Codex / ChatGPT 账号', fields: ['codexHome', 'warnPercent'], kind: 'window', defaultCharacter: 'codex' },
   newapi: { label: '中转站 (new-api / one-api)', fields: ['baseUrl', 'apiKey', 'accessToken', 'userId', 'lowBalance', 'announcements'], kind: 'balance', defaultCharacter: 'claude' },
+  gemini: { label: 'Gemini CLI（OAuth / 中转站）', fields: ['baseUrl', 'apiKey', 'accessToken', 'userId', 'credentialsPath', 'project', 'auth', 'warnPercent'], kind: 'window', defaultCharacter: 'gemini' },
   zhipu: { label: '智谱 GLM / Z.ai Coding Plan', fields: ['baseUrl', 'apiKey', 'warnPercent'], kind: 'window', defaultCharacter: 'zcode' },
   'claude-oauth': { label: 'Claude 订阅 (Claude Code 登录)', fields: ['credentialsPath', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
-  cursor: { label: 'Cursor 订阅（读本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'cursor' },
+  cursor: { label: 'Cursor 订阅（读本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
   custom: { label: '自定义 JSON 接口', fields: ['baseUrl', 'apiKey', 'balancePath', 'usedPath', 'limitPath', 'currency', 'warnPercent'], kind: 'window', defaultCharacter: 'deepseek' },
 };
 
