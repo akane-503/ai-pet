@@ -46,6 +46,17 @@ try {
   }
   if (fixed) config.save();
 } catch (_) { /* 配置还没成形就不迁移 */ }
+// Kimi 桌面版接入：旧配置没有 kimi 数据源，补默认项；本机已有 Kimi Work 数据就直接启用
+try {
+  const ps = config.data.providers || [];
+  if (!ps.some((p) => p && p.type === 'kimi')) {
+    const d = defaultConfig().providers.find((p) => p.type === 'kimi');
+    const dir = d.agentDir || require('./providers/kimi').AGENT_DIR;
+    d.enabled = fs.existsSync(dir);
+    ps.push(d);
+    config.save();
+  }
+} catch (_) { /* 配置还没成形就不迁移 */ }
 // 安装器把填的 DeepSeek Key 留在 install-key.txt（NSIS 不好改 JSON），首次启动并入配置后删掉
 try {
   const seed = path.join(userData, 'install-key.txt');

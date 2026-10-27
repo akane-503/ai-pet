@@ -8,6 +8,7 @@ const impls = {
   zhipu: require('./zhipu'),
   'claude-oauth': require('./claude-oauth'),
   cursor: require('./cursor'),
+  kimi: require('./kimi'),
   custom: require('./custom'),
 };
 
@@ -19,6 +20,7 @@ const TYPE_META = {
   zhipu: { label: '智谱 GLM / Z.ai Coding Plan', fields: ['baseUrl', 'apiKey', 'warnPercent'], kind: 'window', defaultCharacter: 'zcode' },
   'claude-oauth': { label: 'Claude 订阅 (Claude Code 登录)', fields: ['credentialsPath', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
   cursor: { label: 'Cursor 订阅（读本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
+  kimi: { label: 'Kimi 桌面版（Kimi Work）', fields: ['agentDir', 'warnPercent'], kind: 'window', defaultCharacter: 'kimi' },
   custom: { label: '自定义 JSON 接口', fields: ['baseUrl', 'apiKey', 'balancePath', 'usedPath', 'limitPath', 'currency', 'warnPercent'], kind: 'window', defaultCharacter: 'deepseek' },
 };
 

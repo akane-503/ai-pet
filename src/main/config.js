@@ -49,6 +49,7 @@ function defaultConfig() {
       { id: 'zhipu', type: 'zhipu', name: 'GLM Coding Plan', enabled: false, baseUrl: 'https://open.bigmodel.cn', apiKey: '', warnPercent: 90, character: 'zcode' },
       { id: 'claude-oauth', type: 'claude-oauth', name: 'Claude 订阅', enabled: false, credentialsPath: path.join(WIN_HOME, '.claude', '.credentials.json'), warnPercent: 90, character: 'claude' },
       { id: 'gemini', type: 'gemini', name: 'Gemini CLI', enabled: false, baseUrl: '', apiKey: '', accessToken: '', userId: '', credentialsPath: path.join(WIN_HOME, '.gemini', 'oauth_creds.json'), project: '', auth: 'auto', warnPercent: 90, character: 'gemini' },
+      { id: 'kimi', type: 'kimi', name: 'Kimi', enabled: false, agentDir: '', warnPercent: 90, character: 'kimi' },
     ],
     notify: {
       toast: false, bubble: true, sound: false,
@@ -63,6 +64,7 @@ function defaultConfig() {
       claudeDir: '',              // 自动探测（WSL 或本机）
       geminiDir: path.join(WIN_HOME, '.gemini'),
       qwenDir: path.join(WIN_HOME, '.qwen'),
+      kimiDir: path.join(process.env.APPDATA || path.join(WIN_HOME, 'AppData', 'Roaming'), 'kimi-desktop', 'kimi-agent'),
       claudeSettingsPath: '',
     },
     quips: { enabled: false, apiKey: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', intervalHours: 24, perCharacter: 25, keep: 80 },   // 用户主动启用后，使用自己的 DeepSeek Key 生成台词

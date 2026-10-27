@@ -17,7 +17,7 @@ const skillCall = (tool, name) => (tool === 'gemini' || tool === 'cursor') ? `�
 function writePrompt(tool, home = os.homedir()) {
   const dir = SKILL_HOME[tool];
   if (dir && fs.existsSync(path.join(home, dir, 'skills', 'handoff', 'SKILL.md'))) return skillCall(tool, 'handoff');
-  return `请用 handoff 技能把当前任务交接给下一个 AI。没有该技能就在项目根目录写 HANDOFF.md，依次包含：目标与验收标准、我的原话（逐字）、关键决策与否决方案、改动清单、当前状态（逐条标 [已验证]/[未验证]/[推测]）、已知问题（附报错原文）、环境与命令、下一步（精确到文件/命令）。进度以 git 和文件为准，不凭记忆。最后把 HANDOFF.md 的 Windows 绝对路径追加一行到 ${LATEST}（WSL 下为 ${latestWsl()}，用 wslpath -w 转换；目录不存在就新建）。`;
+  return `请用 handoff 技能交接当前任务。没有该技能就在项目根目录写简短 HANDOFF.md（通常40–80行）：当前目标与关键约束、相关改动及未提交工作、验证状态、1–3个下一步；进度以Git和文件为准。保留原始对话路径/会话ID（无法获取就注明）、检索关键词及已有材料链接，接手默认读摘要，有需要再局部查上下文，不复制全部原话或历史。不初始化state或自动提交推送；覆盖前备份旧稿并保留路径。最后把交接文件的Windows绝对路径追加一行到 ${LATEST}（WSL下为 ${latestWsl()}，用wslpath -w转换；目录不存在就新建）。`;
 }
 
 // 文件在目标工具打开的那个目录里就只写相对路径（回原会话的指令还带着文件名）
