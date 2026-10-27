@@ -98,13 +98,14 @@
   </section>
   <section id="tab-activity" class="tab hidden">
     <h1>活跃检测</h1>
-    <p class="hint">“自动”角色模式下，桌宠根据各 agent 最近的会话写入时间判断你正在用谁：Codex（~/.codex/sessions）、Claude Code（.claude/projects，支持 WSL 路径）、Gemini CLI、Qwen Code。Codex 若被路由到 DeepSeek / GLM，会算作对应角色。</p>
+    <p class="hint">“自动”角色模式下，桌宠根据各 agent 最近的会话写入时间判断你正在用谁：Codex（~/.codex/sessions）、Claude Code（.claude/projects，支持 WSL 路径）、Gemini CLI、Qwen Code、Kimi Work（kimi-agent 状态文件）。Codex 若被路由到 DeepSeek / GLM，会算作对应角色。</p>
     <div class="card grid2">
       <label>判定窗口（分钟） <input type="number" min="1" data-act="windowMin" style="width:80px"></label>
       <label>Codex 目录 <input type="text" data-act="codexDir"></label>
       <label>Claude 配置目录（留空自动查找） <input type="text" data-act="claudeDir" placeholder="例如 \\wsl.localhost\发行版\home\用户名\.claude"></label>
       <label>Gemini 目录 <input type="text" data-act="geminiDir"></label>
       <label>Qwen 目录 <input type="text" data-act="qwenDir"></label>
+      <label>Kimi 数据目录 <input type="text" data-act="kimiDir" placeholder="%APPDATA%\kimi-desktop\kimi-agent"></label>
     </div>
     <div class="card"><button id="act-test">立即检测</button><pre id="act-result"></pre></div>
     <h2>自定义 Agent</h2>

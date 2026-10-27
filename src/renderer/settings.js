@@ -42,6 +42,7 @@
     credentialsPath: { label: '凭据文件', type: 'text', wide: true },
     announcements: { label: '抓取公告', type: 'checkbox' },
     dbPath: { label: 'state.vscdb', type: 'text', wide: true, placeholder: '留空：%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb' },
+    agentDir: { label: 'kimi-agent 数据目录', type: 'text', wide: true, placeholder: '留空：%APPDATA%\\kimi-desktop\\kimi-agent' },
     cookie: { label: 'Cookie（可选）', type: 'password', wide: true, hint: '读不到本机登录时，填网页版 WorkosCursorSessionToken' },
     balancePath: { label: '余额字段', type: 'text', placeholder: 'data.balance' },
     usedPath: { label: '已用字段', type: 'text', placeholder: 'data.used' },

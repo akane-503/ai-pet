@@ -109,6 +109,8 @@ function detect(cfg, providers, agents = []) {
   }
   if (cfg.geminiDir) { const t = newestInDir(path.join(cfg.geminiDir, 'tmp'), { depth: 2, limitDirs: 4 }); if (t) det.gemini = Math.max(det.gemini || 0, t); }
   if (cfg.qwenDir) { const t = newestInDir(path.join(cfg.qwenDir, 'projects'), { depth: 1, limitDirs: 4 }); if (t) det.qwen = Math.max(det.qwen || 0, t); }
+  // Kimi 桌面版：kimi-agent 目录下的状态文件（会话用量/模型/改动日志）随 Kimi Work 干活更新
+  if (cfg.kimiDir) { const t = newestInDir(cfg.kimiDir, { depth: 0, filter: (n) => n.endsWith('.json') }); if (t) det.kimi = Math.max(det.kimi || 0, t); }
   for (const a of agents) { const t = a.dir ? newestInDir(a.dir, { depth: 1, limitDirs: 4 }) : 0; if (t) det[a.id] = Math.max(det[a.id] || 0, t); }
   let active = null, at = 0;
   for (const [k, t] of Object.entries(det)) { if (t > at) { at = t; active = k; } }
@@ -126,6 +128,7 @@ const NATIVE_RULES = [
   [/Claude Code/i, 'claude'],
   [/^(Codex|ChatGPT)(\s*[-–—|]|$)/i, 'codex'],
   [/^(?:Google\s+)?Gemini(\s*[-–—|]|$)/i, 'gemini'],
+  [/^Kimi\s*(智能助手)?(\s*[-–—|]|$)/, 'kimi'],
 ];
 const WEB_RULES = [
   [/^Gemini\b/i, 'gemini'], [/^Kimi\b/i, 'kimi'], [/^(Qwen|千问|通义)/i, 'qwen'], [/^Grok\b/i, 'grok'], [/^(豆包|Doubao)/i, 'seed'],
@@ -153,7 +156,7 @@ function characterForWindow(win, agents = []) {
   if (!win) return null;
   const custom = agentForWindow(win, agents); if (custom) return custom;
   const exe = String(win.processName || '').toLowerCase();
-  const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini' };
+  const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini', 'kimi.exe': 'kimi' };
   if (native[exe]) return native[exe];
   if (/^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/.test(exe) || BROWSER_RE.test(win.title || '')) {
     for (const [re, id] of WEB_RULES) if (re.test(String(win.title || '').trim())) return id;

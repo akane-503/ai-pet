@@ -594,13 +594,16 @@ test('API handoff digest keeps the summary and the newest turns within budget', 
   assert.ok(d.startsWith('【早先对话摘要】S')); assert.ok(d.endsWith('49')); assert.ok(d.length <= 1000); assert.ok(!d.includes('x0\n'));
 });
 
-test('API handoff document inserts verbatim quotes as section 2 and flags it unverified', () => {
+test('API handoff keeps context pointers without copying historical user messages', () => {
   const h = require('../src/main/handoff-api');
   const md = h.compose({ body: '# HANDOFF — 测试\n## 1. 目标与验收标准\nA\n## 3. 关键决策\nB', user: ['原话一\n续', '原话一\n续', '原话二'], kind: 'claude', transcript: 'T.jsonl', root: 'D:\\p', gitInfo: { head: 'abc', status: ' M a.js', stat: '' } });
   assert.ok(md.startsWith('# HANDOFF — 测试\n生成时间：'));
   assert.ok(md.includes('未核对代码') && md.includes('原始对话：T.jsonl') && md.includes('代码锚点：abc'));
-  assert.ok(md.indexOf('## 1.') < md.indexOf('## 2. 用户原话') && md.indexOf('## 2. 用户原话') < md.indexOf('## 3.'));
-  assert.equal(md.split('> 原话一\n> 续').length, 2);
+  assert.ok(md.includes('默认只读当前摘要') && md.includes('按任务关键词检索'));
+  assert.equal(md.includes('原话一'), false);
+  assert.equal(md.includes('原话二'), false);
+  const huge = h.compose({ body: '# HANDOFF — short', user: Array(1000).fill('history'.repeat(1000)), kind: 'codex', transcript: 'T.jsonl', root: 'D:\\p' });
+  assert.ok(huge.length < 1500, 'historical quotes must not inflate the receiving context');
   assert.ok(md.includes('## 附：git 实测') && md.includes(' M a.js'));
 });
 
@@ -758,7 +761,7 @@ test('API handoff document says how much history it replaced and where the backu
     gitInfo: { head: 'abc' }, previous: { lines: 319, backup: 'C:\\bk\\HANDOFF.md' } });
   assert.match(md, /历史：覆盖前 319 行/);
   assert.match(md, /C:\\bk\\HANDOFF\.md/);
-  assert.match(md, /## 2\. 用户原话/);
+  assert.match(md, /原始对话：p\.jsonl/);
 });
 
 test('API handoff failure is shown in the bubble instead of silently falling back to the source AI', async () => {
@@ -1735,4 +1738,82 @@ test('menuWindows enumerates only own-process Electron menu columns; null (no FF
   const r = w.menuWindows();
   assert.ok(Array.isArray(r), '可探测时返回数组');
   assert.ok(r.every((x) => typeof x.left === 'number' && typeof x.top === 'number'), '每列带屏幕矩形');
+});
+
+// ---------- Kimi 桌面版（Kimi Work） ----------
+
+const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+const refreshJwt = (level, iat) => [b64url({ alg: 'HS512', typ: 'JWT' }), b64url({ iss: 'account', aud: ['kimi.com'], typ: 'refresh', iat, exp: iat + 864000, membership: { level }, code_membership: { level } }), 'sig'].join('.');
+
+function kimiFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-kimi-'));
+  const dir = path.join(root, 'kimi-desktop', 'kimi-agent');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(root, 'kimi-desktop', 'Local Storage', 'leveldb'), { recursive: true });
+  const conv = 'agent:main:main:conversation:ce58b388';
+  fs.writeFileSync(path.join(dir, 'conversation-context-usage.json'), JSON.stringify({ [conv]: { contextUsage: 0.14867782592773438, contextTokens: 38975, maxContextTokens: 262144, remainingContextTokens: 223169, model: 'k3d1-agent', updatedAt: '2026-10-25T17:52:53.311Z' } }));
+  fs.writeFileSync(path.join(dir, 'conversation-kimi-work-models.json'), JSON.stringify({ [conv]: { modelKey: 'k3d1-agent', thinkingLevel: 'high' } }));
+  fs.writeFileSync(path.join(dir, 'kimi-work-models-cache.json'), JSON.stringify({ 'latest:d4v8': { models: [
+    { key: 'k3d1-agent', displayName: 'K3.1 Pro', reasoningEffortOptions: [{ effort: 'REASONING_EFFORT_LOW' }, { effort: 'REASONING_EFFORT_HIGH' }, { effort: 'REASONING_EFFORT_MAX' }] },
+    { key: 'k2d8-preview', displayName: 'K2.8 Preview', switchableTo: ['k3d1-agent'] },
+  ] } }));
+  return { root, dir };
+}
+
+test('Kimi Work reports context usage, rate-limit wall, current model and membership level from local state', async () => {
+  const { root, dir } = kimiFixture();
+  try {
+    const impl = require('../src/main/providers/kimi');
+    const conv2 = 'agent:main:main:conversation:93f442f9';
+    fs.writeFileSync(path.join(dir, 'conversation-errors.json'), JSON.stringify({ [conv2]: ['{"t":"reason","reason":3,"paywallTrigger":"work_rate_limit_exceeded"}'] }));
+    fs.writeFileSync(path.join(dir, 'conversation-statuses.json'), JSON.stringify({ [conv2]: 'blocked' }));
+    fs.writeFileSync(path.join(root, 'kimi-desktop', 'Local Storage', 'leveldb', '000003.log'), 'junk' + refreshJwt(10, 1792949866) + 'trailing');
+    const r = await impl.fetchSnapshot({ id: 'kimi', type: 'kimi', name: 'Kimi', agentDir: dir });
+    assert.equal(r.ok, true);
+    assert.equal(r.source, 'local');
+    assert.equal(r.windows[0].key, 'context');
+    assert.equal(r.windows[0].usedPercent, 14.9);
+    assert.equal(r.windows[1].key, 'work');
+    assert.equal(r.windows[1].usedPercent, 100);
+    assert.equal(r.extra.model, 'K3.1 Pro');
+    assert.equal(r.extra.thinking, '高');
+    assert.deepEqual(r.models, ['K3.1 Pro', 'K2.8 Preview']);
+    assert.equal(r.plan, '会员 L10');
+    assert.match(r.lines.join(' '), /K3\.1 Pro（推理高）/);
+    assert.match(r.lines.join(' '), /额度已用完/);
+    assert.equal(r.fraction, 1 - 0.14867782592773438);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Kimi without a rate-limit hit shows a healthy wall line; never-used install stays ok and honest', async () => {
+  const { root, dir } = kimiFixture();
+  try {
+    const impl = require('../src/main/providers/kimi');
+    const r = await impl.fetchSnapshot({ id: 'kimi', type: 'kimi', name: 'Kimi', agentDir: dir });
+    assert.equal(r.ok, true);
+    assert.equal(r.windows.length, 1);
+    assert.match(r.lines.join(' '), /最近没撞额度墙/);
+    const empty = path.join(root, 'empty-agent');
+    fs.mkdirSync(empty);
+    const r2 = await impl.fetchSnapshot({ id: 'kimi', type: 'kimi', name: 'Kimi', agentDir: empty });
+    assert.equal(r2.ok, true);
+    assert.match(r2.lines.join(' '), /还没开过 Kimi Work 会话/);
+    const missing = await impl.fetchSnapshot({ id: 'kimi', type: 'kimi', name: 'Kimi', agentDir: path.join(root, 'nope') });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /没找到 Kimi 桌面版数据/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Kimi desktop windows and kimi-agent writes both map to the kimi character', async () => {
+  assert.equal(activity.characterForWindow({ title: 'Kimi', processName: 'Kimi.exe' }), 'kimi');
+  assert.equal(activity.characterForWindow({ title: 'Kimi 智能助手', processName: 'unknown.exe' }), 'kimi');
+  assert.equal(activity.characterForWindow({ title: 'Kimi - Google Chrome', processName: 'chrome.exe' }), 'kimi');
+  assert.equal(activity.characterForWindow({ title: 'KimiAPI 文档', processName: 'explorer.exe' }), null);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-kimi-act-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'file-edit-journal.json'), '{"version":1,"turns":[]}');
+    const a = activity.detect({ kimiDir: dir, codexDir: '', geminiDir: '', qwenDir: '' }, [], []);
+    assert.equal(a.details.kimi > 0, true);
+    assert.equal(a.active, 'kimi');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

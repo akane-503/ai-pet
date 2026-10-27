@@ -2,6 +2,8 @@
 
 ## A / B 两种安装包
 
+在 [最新版本下载页](https://github.com/akane-503/ai-pet/releases/latest) 下载：`setup-A.exe` 为完整交接版，`setup-B.exe` 为额度纯享版；`setup.exe` 与 A 版相同，供原版用户升级。
+
 运行 `npm run dist:editions` 生成 `dist/editions/setup-A.exe` 和 `setup-B.exe`，附 SHA256 和使用说明。
 
 - A：完整交接版，沿用原版安装标识和配置，可选安装 handoff/takeover 技能。
@@ -33,7 +35,9 @@ Windows 桌面额度桌宠。它会跟着你正在用的 AI 工具换角色，�
 
 ## 交接与技能
 
-右键「交接给别的 AI」时，桌宠会读来源工具的本地对话记录、整理成 `HANDOFF.md`，再把接手指令交给你粘贴。目标端 AI 如果装了 `skills/` 里的两个技能会更顺：
+右键「交接给别的 AI」，选择来源会话和目标工具，即可开始转接。会话扫描在独立进程进行，避免阻塞桌宠动画。桌宠读取来源工具的本地对话记录、整理成简短 `HANDOFF.md`，再按目标能力预填指令或保留到剪贴板。目标端 AI 如果装了 `skills/` 里的两个技能会更顺：
+
+交接默认保留当前任务摘要、关键约束、验证状态、下一步，以及原始对话定位信息；需要追溯时再按关键词读取历史，不把全部历史原话重复塞进接手上下文。覆盖旧稿前保留备份。
 
 可读来源：Claude Code、Codex、DSH、WorkBuddy、ZCode、Cursor。Cursor 读的是 `%APPDATA%\Cursor\User\globalStorage\state.vscdb` 里的 composer 与气泡；Plan / 后台任务注入的 user 消息会被过滤，用户原话只取完整气泡（老会话缺气泡时不拿截断的预览顶替）。
 
@@ -46,7 +50,7 @@ DSH 桌面版没有会话级入口：启动参数只有 `--dsh-desktop-workspace
 - `skills/handoff/SKILL.md` —— 让来源 AI 自己写交接（读不到对话记录时退回这条路）；
 - `skills/takeover/SKILL.md` —— 让接手的 AI 先核对代码锚点再继续。
 
-把对应目录拷到目标工具的技能目录即可（Claude Code：`~/.claude/skills/`，DSH：`~/.dsh/skills/`，Codex：`~/.codex/skills/`，Cursor：`~/.cursor/skills/`）。没装也能用——接手指令里已经写了「没有这个技能就完整读该文件…」。
+把对应目录拷到目标工具的技能目录即可（Claude Code：`~/.claude/skills/`，DSH：`~/.dsh/skills/`，Codex：`~/.codex/skills/`，Cursor：`~/.cursor/skills/`）。没装也能用，接手指令会提示读取交接文件。
 
 ## 操作
 | 动作 | 效果 |
@@ -78,10 +82,11 @@ Cursor 是多模型 IDE，不固定成某一个娘：桌宠会只读 `%APPDATA%\
 | DeepSeek | 余额、今日已用 |
 | Codex / ChatGPT | 5 小时 / 7 天用量（读 `~/.codex/auth.json`） |
 | 中转站（new-api / one-api） | 余额，或今日已用 |
-| Gemini CLI | 官方 OAuth：Pro / Flash 额度剩余；走中转站：中转站余额或累计/今日已用（自动读 `~/.gemini/.env`） |
+| Gemini CLI | 官方 OAuth：Pro / Flash 额度剩余；走中转站：真实余额或接口支持的今日用量，不用累计值代替（自动读 `~/.gemini/.env`） |
 | 智谱 GLM Coding Plan | 5 小时额度 |
 | Claude 订阅 | 5 小时 / 7 天用量（读 Claude Code 登录凭据） |
 | Cursor | 本月用量（读本机 Cursor 登录，接口非官方） |
+| Kimi 桌面版 | 本地 Kimi Work 上下文用量、模型、会员等级及限流记录；不代表套餐剩余额度 |
 | 自定义 JSON 接口 | 填 URL 和字段路径，显示余额或已用百分比 |
 
 Trae、WorkBuddy、元宝没有公开的额度接口，目前只做识别和启动。如果你知道接口，可以用「自定义 JSON 接口」接上。

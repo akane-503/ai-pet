@@ -773,18 +773,17 @@ function git(root) {
   return { head: run('rev-parse', '--short', 'HEAD'), status: run('status', '--short'), stat: run('diff', '--stat') };
 }
 
-const PROMPT = `你是交接整理员。下面是一段 AI 编程对话的记录（可能截断），请整理成交接文档给另一个 AI 接手。
-只依据记录内容，不编造；报错、命令、路径、版本号原样照抄。状态条目标 [已验证]（记录里有实际运行结果的，写明依据）/[未验证]/[推测]。
-被用户否决或纠正过的方案必须写进"关键决策"表的否决列。用简体中文，Markdown，第一行是 "# HANDOFF — <任务一句话>"，然后依次只写这些二级标题：
-## 1. 目标与验收标准
-## 3. 关键决策（表格：决策 | 原因 | 否决的方案及原因）
-## 4. 改动清单（文件 — 改了什么）
-## 5. 当前状态
-## 6. 已知问题与坑（含报错原文）
-## 7. 环境与命令
-## 8. 下一步（按顺序，精确到文件/命令）
-## 9. 不要做的事
-不要写第 2 节（用户原话由程序另行逐字附上），不要输出其他寒暄。`;
+const PROMPT = `你是交接整理员。根据下面的 AI 编程对话（可能截断），写一份当前任务短摘要，供另一个 AI 配合 Git 现场继续工作。
+只依据记录，不编造；正文通常 40–80 行、1500 中文字以内。不累计历史流水账，不粘贴完整对话、工具输出或全部用户原话。
+只保留仍适用的目标、验收标准、约束、用户纠正、关键决策与否决理由。必要的用户原话只选少量关键短引文，不截断会改变含义的约束。
+状态标 [已验证]（记录里有运行结果，注明命令与结果）/[未验证]/[推测]，不要把对话中的完成声明当现场验收。
+用简体中文 Markdown，第一行是 "# HANDOFF — <任务一句话>"，只写以下二级标题：
+## 当前任务
+## 当前状态
+包含相关文件和未提交工作、影响下一步的决策、验证结果与仍待验证项。规格和详细证据只引用已有路径。
+## 下一步
+按顺序列 1–3 个可执行步骤，含必要文件或命令。
+原始对话路径、代码锚点和历史备份由程序附上，接手者仅在缺少关键约束或证据冲突时按需检索。不要输出寒暄。`;
 
 // 会话太长时，把「最近 60k 字符以外」的旧记录交给 DeepSeek 压成要点，而不是直接扔掉
 const COMPACT_PROMPT = '你在压缩一段较早的 AI 对话记录，供交接文档使用。保留：用户目标与关键原话、已完成的改动、被否决的方案、踩过的坑与报错原文。丢弃寒暄与重复。输出简体中文，不超过 1200 字，不要 Markdown 标题。';
@@ -824,17 +823,16 @@ async function summarize({ digest, gitInfo, api, request }) {
   return chat({ api, request, system: PROMPT, user: digest + ctx });
 }
 
-// 模型输出 + 程序逐字原话 + 头部元信息 + git 实测
+// 短摘要 + 兼容的头部定位接口；历史原话通过原始对话按需读取
 function compose({ body, user, kind, transcript, root, sessionCwd, gitInfo, compacted, previous, now = new Date() }) {
-  const quotes = [...new Set(user)].map((t) => '> ' + (t.length > 1500 ? t.slice(0, 1500) + '…（截断）' : t).replace(/\n/g, '\n> ')).join('\n\n');
-  const sec2 = `## 2. 用户原话（程序从对话记录逐字抄录）\n${quotes || '（记录里没有）'}\n\n`;
-  let md = /^## 3\./m.test(body) ? body.replace(/^## 3\./m, sec2 + '## 3.') : body + '\n\n' + sec2;
+  const md = body;
   const lines = md.split('\n'); const title = /^# /.test(lines[0]) ? lines.shift() : '# HANDOFF';
   const stamp = now.toLocaleString('zh-CN', { hour12: false });
   const head = [title, `生成时间：${stamp}　来源工具：${{ codex: 'Codex', dsh: 'DSH Desktop', workbuddy: 'WorkBuddy', zcode: 'ZCode', cursor: 'Cursor' }[kind] || 'Claude Code'}（由 AI 桌宠用 DeepSeek 按对话记录整理，**未核对代码**，接手先用 git 核对）`,
     `代码锚点：${(gitInfo && gitInfo.head) || '未知'}　项目根目录：${root || '未识别'}`, `会话启动目录：${sessionCwd || '未识别'}（可能与实际项目不同，以项目根目录为准）`,
     ...(root ? [`<!-- ai-pet-project:${JSON.stringify({ root })} -->`] : []), `原始对话：${transcript}`,
-    // 这个文件是唯一真相源：写清楚这次替换掉了多少历史、备份在哪，接手人才知道去哪找被顶掉的内容
+    '上下文读取：默认只读当前摘要和相关 Git 差异；缺少关键约束或证据冲突时，在上述会话内按任务关键词检索并局部展开，不通读全部历史。',
+    // 旧稿留在备份中，当前摘要不重复载入历史
     ...(compacted ? [`早先对话：更早的 ${compacted} 条已用 DeepSeek 压缩成摘要`] : []),
     ...(previous ? [`历史：覆盖前 ${previous.lines} 行，已备份到 ${previous.backup}（本文只记录本轮，旧版决策与坑看备份）`] : []), ''];
   const tail = gitInfo && gitInfo.head ? `\n\n## 附：git 实测（桌宠生成时）\n\`\`\`\n${gitInfo.status || '(干净)'}\n\n${gitInfo.stat}\n\`\`\`\n` : '\n';
