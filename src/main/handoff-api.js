@@ -506,10 +506,10 @@ function dshMeta(file) {
   let mtime = 0; try { mtime = fs.statSync(file).mtimeMs; } catch (_) { /* 没了 */ }
   const key = `${file}|${mtime}`;
   if (dshMetaCache.has(key)) return dshMetaCache.get(key);
-  let meta = { name: '', project: '' };
+  let meta = { name: '', project: '', users: 0 };
   try {
     const r = parseTranscript(readTranscript(file), 'dsh');
-    meta = { name: sessionName(r.user[0]).slice(0, 26), project: r.cwd ? path.basename(r.cwd) : '' };
+    meta = { name: sessionName(r.user[0]).slice(0, 26), project: r.cwd ? path.basename(r.cwd) : '', users: r.user.length };
   } catch (_) { /* 解压失败就留空 */ }
   dshMetaCache.set(key, meta);
   return meta;
@@ -534,10 +534,24 @@ function zcodeMeta(file, dir) {
 }
 // 给重名会话补的短 id：同一路径永远得到同一串，避免「同一项目里好几个会话长得一样」
 const shortId = (s) => { let h = 0; for (const ch of String(s)) h = (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0; return h.toString(36).slice(-4).padStart(4, '0'); };
+// 会话列表里也要看得出项目：记录开头就带 cwd（Codex 的 session_meta、Claude/WorkBuddy 的首条消息）
+function headCwd(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r'); const b = Buffer.alloc(65536), n = fs.readSync(fd, b, 0, b.length, 0);
+    for (const line of b.toString('utf8', 0, n).split(/\r?\n/)) {
+      let o; try { o = JSON.parse(line); } catch (_) { continue; }
+      const cwd = (o.payload && o.payload.cwd) || o.cwd || (o.message && o.message.cwd);
+      if (typeof cwd === 'string' && path.isAbsolute(cwd)) return cwd;
+    }
+  } catch (_) { /* 读不到就空着 */ }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+  return '';
+}
 function recentSessions(kind, dirs, n = 5) {
   // ZCode：标出「你最近敲过字的那个会话」，菜单里能一眼看出默认会转接谁
   const active = kind === 'zcode' ? zcodeActiveId(dirs) : '';
-  const list = recentTranscripts(kind, dirs, n).map((f) => {
+  const rows = recentTranscripts(kind, dirs, n).map((f) => {
     if (kind === 'zcode') {
       const minutes = f.m ? Math.max(0, Math.round((Date.now() - f.m) / 60000)) : null;
       return { file: f.p, name: (f.name || '（无标题）').slice(0, 40), project: zcodeMeta(f.p, f.dir).project, fresh: freshText(minutes), minutes,
@@ -549,13 +563,17 @@ function recentSessions(kind, dirs, n = 5) {
     }
     if (kind === 'dsh') {
       const meta = dshMeta(f.p), minutes = f.m ? Math.max(0, Math.round((Date.now() - f.m) / 60000)) : null;
-      return { file: f.p, minutes, fresh: freshText(minutes),
+      return { file: f.p, minutes, fresh: freshText(minutes), users: meta.users,
         name: meta.name || path.basename(path.dirname(path.dirname(f.p))).replace(/^-+|-+$/g, ''), project: meta.project };
     }
     let l = {};
     try { l = threadLabel(kind, f.p, (dirs || [])[0]); } catch (_) { /* 没名字也照列 */ }
-    return { file: f.p, name: l.name || path.basename(f.p).replace(/\.jsonl(\.zstd)?$/, '').slice(0, 40), project: '', fresh: l.fresh || '', minutes: l.minutes };
+    const cwd = headCwd(f.p);
+    return { file: f.p, name: l.name || path.basename(f.p).replace(/\.jsonl(\.zstd)?$/, '').slice(0, 40), project: cwd ? path.basename(cwd) : '', fresh: l.fresh || '', minutes: l.minutes };
   });
+  // DSH 打开工作区会先建空会话：一条用户消息都没有的会话无法转接，别让它占着列表
+  const list = rows.filter((s) => kind !== 'dsh' || s.users > 0);
+  for (const s of list) delete s.users;
   // 同一项目里多个会话可能重名：重名的补一段短 id，否则菜单里根本分不出
   const count = new Map();
   for (const s of list) { const k = `${s.name}|${s.project}`; count.set(k, (count.get(k) || 0) + 1); }

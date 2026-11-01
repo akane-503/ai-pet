@@ -486,8 +486,8 @@ test('direct handoff: pointer resolves the newest transcript; takeover prompt ca
   const { takeoverPrompt } = require('../src/main/handoff');
   const home = path.join(dir, 'home');
   for (const tool of ['.claude', '.zcode']) { fs.mkdirSync(path.join(home, tool, 'skills', 'takeover'), { recursive: true }); fs.writeFileSync(path.join(home, tool, 'skills', 'takeover', 'SKILL.md'), '# takeover'); }
-  assert.equal(takeoverPrompt(null, { tool: 'claude', home, from: 'C:\\x\\s1.jsonl' }), '/takeover --from "C:/x/s1.jsonl"');
-  assert.equal(takeoverPrompt(null, { tool: 'zcode', home, from: 'C:\\x\\s1.jsonl' }), '$takeover --from "C:/x/s1.jsonl"');
+  assert.equal(takeoverPrompt(null, { tool: 'claude', home, from: 'C:\\x\\s1.jsonl' }), '/takeover --from "C:/x/s1.jsonl"（以 --from 的会话为准，不要读仓库里的 HANDOFF 文件）');
+  assert.equal(takeoverPrompt(null, { tool: 'zcode', home, from: 'C:\\x\\s1.jsonl' }), '$takeover --from "C:/x/s1.jsonl"（以 --from 的会话为准，不要读仓库里的 HANDOFF 文件）');
   assert.ok(takeoverPrompt(null, { tool: "cursor", home, from: "cursor:C:/db#id1" }).includes('"cursor:C:/db#id1"'));
   assert.match(takeoverPrompt(null, { tool: 'claude', home: path.join(dir, 'nohome'), from: 'C:\\x\\s1.jsonl' }), /接手来源会话/);
 });
@@ -2309,4 +2309,77 @@ test('existing Codex windows use app lifecycle activation rather than manipulati
   assert.equal(result.ok,true);assert.equal(result.route,'windows-app-activation');assert.equal(result.already,undefined);
   assert.equal(scans,0);assert.equal(calls[0].command,'explorer.exe');assert.deepEqual(Array.from(calls[0].args),['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App']);
   failed=true;const failure=await impl.launch('codex',{});assert.equal(failure.ok,false);assert.match(failure.message,/activation failed/);
+});
+
+test('transfer menu reserves room for its tallest page so later pages are not clipped', () => {
+  const { beside, fit, targets } = require('../src/shared/transfer-flow');
+  const area = { x: 0, y: 0, width: 1920, height: 1032 }, pet = { x: 1700, y: 850, width: 150, height: 180 };
+  const anchor = beside(pet, area, 300, 440);
+  const short = fit(anchor, area, 300, 300), long = fit(anchor, area, 300, 440);
+  assert.equal(short.y, long.y, '先短后长时左上角不动');
+  assert.equal(short.height, 300); assert.equal(long.height, 440);
+  assert.ok(long.y + long.height <= area.height - 8, '整页留在工作区内');
+  // 旧行为按首次高度算锚点：桌宠在下半屏时，后面更长的页面只能被压扁
+  assert.ok(fit(beside(pet, area, 300, 300), area, 300, 440).height < 440);
+  assert.deepEqual(targets([{ id: 'codex' }, { id: 'zcode' }, { id: 'claude' }], 'zcode').map((t) => t.id), ['codex', 'claude']);
+  assert.equal(targets([{ id: 'zcode' }], 'zcode').length, 0);
+  assert.deepEqual(targets(null, 'zcode'), []);
+});
+
+test('transfer menu stays open right after showing, hides the source tool, and names the handoff file it will use', () => {
+  const main = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
+  assert.match(main, /flow\.fit\(dialog\.anchor,area,width,requested\)/);
+  assert.match(main, /beside\(pet,area,width,limit,8,dialog\.openPoint\)/);
+  assert.match(main, /Date\.now\(\)-\(transferDialog\?\.shownAt\|\|0\)<600/);
+  assert.match(main, /filter\(x=>x\.t\.id!==sourceKey\)/);
+  assert.match(main, /目标工具就是来源工具/);
+  assert.match(main, /file:fromLatest\?fromLatest\.file/);
+  const ui = fs.readFileSync(path.join(__dirname, '../src/renderer/transfer.js'), 'utf8');
+  assert.match(ui, /'#intro'\)\.hidden=!intro/);
+  assert.match(ui, /data\.fileDir/);
+  assert.match(ui, /t\.workspace\?'带目录':'仅指令'/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/renderer/transfer.html'), 'utf8'), /id="session-search"/);
+});
+
+test('DSH pointer reads the workspace from the session header and survives a tool-heavy tail', () => {
+  const z = require('node:zlib'); if (!z.zstdCompressSync) return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-dsh-head-'));
+  try {
+    const proj = path.join(dir, 'project'); fs.mkdirSync(proj);
+    const file = path.join(dir, 'session.v4.jsonl.zstd');
+    const frame = (rows) => z.zstdCompressSync(Buffer.from(rows.map((r) => JSON.stringify(r)).join('\n') + '\n'));
+    const parts = [
+      frame([{ type: 'session', version: 4, cwd: proj }]),
+      frame([{ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'real task' }] } }]),
+    ];
+    // 工具输出占满 128 KiB 尾部，用户原文落在窗口外
+    for (let i = 0; i < 60; i++) parts.push(frame([{ type: 'tool/result', data: { output: 'x'.repeat(4000) } }]));
+    parts.push(frame([{ type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'thinking' }, { type: 'tool-call', name: 'pwsh', arguments: '{}' }] } } }]));
+    fs.writeFileSync(file, Buffer.concat(parts));
+    const r = require('../src/main/session-reader').readSession(file);
+    assert.equal(r.project, proj, '工作区来自文件头的 session 事件');
+    assert.ok(r.messages.some((m) => m.text === 'real task'), '放大窗口后要读到最后的用户原文');
+    assert.ok(r.messages.some((m) => m.text === '[工具调用 pwsh]'), '没有正文的工具回合也要留一行');
+    assert.equal(require('../src/main/handoff-api').sessionPointer('dsh', [], '', file).project, proj);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('DSH session picker hides empty sessions and jsonl rows carry their project', () => {
+  const z = require('node:zlib'); if (!z.zstdCompressSync) return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-dsh-list-'));
+  try {
+    const ses = (name) => { const d = path.join(dir, 'sessions', name); fs.mkdirSync(d, { recursive: true }); return path.join(d, 'session.v4.jsonl.zstd'); };
+    const frame = (rows) => z.zstdCompressSync(Buffer.from(rows.map((r) => JSON.stringify(r)).join('\n') + '\n'));
+    const empty = ses('--D-empty--');
+    fs.writeFileSync(empty, frame([{ type: 'session', cwd: path.join(dir, 'empty') }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'hi' }] } } }]));
+    const used = ses('--D-used--');
+    fs.writeFileSync(used, frame([{ type: 'session', cwd: dir }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'real task' }] } }]));
+    const dsh = require('../src/main/handoff-api').recentSessions('dsh', [dir], 8);
+    assert.equal(dsh.length, 1, '没有用户消息的空会话不进列表');
+    assert.equal(dsh[0].file, used);
+    const proj = path.join(dir, 'proj'); fs.mkdirSync(proj);
+    const cdir = path.join(dir, 'projects', 'p'); fs.mkdirSync(cdir, { recursive: true });
+    fs.writeFileSync(path.join(cdir, 'a.jsonl'), JSON.stringify({ type: 'user', cwd: proj, message: { role: 'user', content: 'x' } }) + '\n');
+    assert.equal(require('../src/main/handoff-api').recentSessions('claude', [dir], 5)[0].project, path.basename(proj));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

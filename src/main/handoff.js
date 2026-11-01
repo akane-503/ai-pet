@@ -40,9 +40,12 @@ function takeoverPrompt(file, meta = {}) {
     const source = String(meta.from).replace(/\\/g, '/');
     const reader = meta.reader ? ` --reader "${String(meta.reader).replace(/\\/g, '/')}"` : '';
     const locate = meta.locateWorkspace ? ' --locate-workspace' : '';
+    // 技能没被触发（或目标工具里还有旧上下文）时的一个硬约束：项目里可能躺着好几份旧 HANDOFF，
+    // 按 --from 就是按会话，别回头去读那些文件
+    const guard = '（以 --from 的会话为准，不要读仓库里的 HANDOFF 文件）';
     const skill = SKILL_HOME[meta.tool];
-    if (skill && fs.existsSync(path.join(meta.home || os.homedir(), skill, 'skills', 'takeover', 'SKILL.md'))) return `${skillCall(meta.tool, 'takeover')} --from "${source}"${reader}${locate}`;
-    return `接手来源会话 "${source}"${reader}：${meta.locateWorkspace?'先只读来源记录，依据 cwd、workspaceHints 和明确的工具工作目录自动定位项目；未定位前不改文件；':''}只读指定会话尾部，先确定最后真实用户请求与未完成项，核对工作目录和 Git（status + diff --stat）后继续；若已完成只报告验收，不重做、不自动提交；不新写交接文件`;
+    if (skill && fs.existsSync(path.join(meta.home || os.homedir(), skill, 'skills', 'takeover', 'SKILL.md'))) return `${skillCall(meta.tool, 'takeover')} --from "${source}"${reader}${locate}${guard}`;
+    return `接手来源会话 "${source}"${reader}${guard}：${meta.locateWorkspace?'先只读来源记录，依据 cwd、workspaceHints 和明确的工具工作目录自动定位项目；未定位前不改文件；':''}只读指定会话尾部，先确定最后真实用户请求与未完成项，核对工作目录和 Git（status + diff --stat）后继续；若已完成只报告验收，不重做、不自动提交；不新写交接文件`;
   }
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').replace(/[[\]【】]/g, '').split(/[：:，,。；;、（(]/)[0].trim().slice(0, 24);
   // 交接文件名里通常已经是任务名（HANDOFF-修复桌宠工具切换与提醒.md）

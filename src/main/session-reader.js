@@ -125,27 +125,45 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
     } finally { db.close(); }
   } else {
     const fd = fs.openSync(ref.file, 'r');
+    const readAt = (offset,length) => { const b=Buffer.alloc(Math.max(0,length)); if(b.length&&offset>=0)fs.readSync(fd,b,0,b.length,offset); return b; };
+    // DSH 每追加一段写一个独立 zstd 帧：按帧头切开逐帧解；半截帧跳过，不影响后面的
+    const dshText = (buf) => {
+      const decompress = require('node:zlib').zstdDecompressSync;
+      if (!decompress) throw new Error('DSH 压缩会话需要 Node 24+ 的 zstd 支持，请使用普通交接或可用的解压工具');
+      const positions=[]; for(let i=0;i+4<=buf.length;i++) if(buf.readUInt32LE(i)===0xFD2FB528) positions.push(i);
+      if(!positions.length) return '';
+      positions.push(buf.length); let text='', frame=positions[0];
+      for(let i=1;i<positions.length;i++) {
+        try { text += decompress(buf.subarray(frame,positions[i]),{maxOutputLength:MAX_BYTES*8}).toString('utf8'); frame=positions[i]; }
+        catch(_) { /* 写入中的半截帧或假魔数，跳过 */ }
+      }
+      return text;
+    };
+    // 会话尾部至少要有一个带原文的用户消息，才算读到了「当前任务」；只有工具调用不算
+    const DSH_USER = /"type":"user\/message"/;
     let tail;
     try {
-      const size = fs.fstatSync(fd).size, start = Math.max(0, size - maxBytes);
-      if (start > 0 && ref.kind !== 'dsh') {
-        const head = Buffer.alloc(Math.min(MAX_BYTES,size)); fs.readSync(fd,head,0,head.length,0);
-        for(const line of head.toString('utf8').split(/\r?\n/)) { try { const d=JSON.parse(line); const p=d.payload||d.message||d; if(p.cwd||d.cwd) {result.project=p.cwd||d.cwd;break;} } catch(_) {} }
-      }
-      const buf = Buffer.alloc(size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      result.truncated = start > 0;
+      const size = fs.fstatSync(fd).size;
       if (ref.kind === 'dsh') {
-        const decompress = require('node:zlib').zstdDecompressSync;
-        if (!decompress) throw new Error('DSH 压缩会话需要 Node 24+ 的 zstd 支持，请使用普通交接或可用的解压工具');
-        const positions=[]; for(let i=0;i+4<=buf.length;i++) if(buf.readUInt32LE(i)===0xFD2FB528) positions.push(i);
-        positions.push(buf.length); tail=''; let frame=positions[0];
-        for(let i=1;i<positions.length;i++) {
-          try { tail += decompress(buf.subarray(frame,positions[i]),{maxOutputLength:MAX_BYTES*8}).toString('utf8'); frame=positions[i]; }
-          catch(_) { result.truncated=true; }
-          if(Buffer.byteLength(tail)>maxBytes*2) {tail=tail.slice(-maxBytes);result.truncated=true;}
+        // session 事件（带 cwd）只写在文件头，尾部窗口里通常已经没有它：工作区得单独从头里取，
+        // 否则 DSH 来源永远定位不到项目，只能让接手 AI 自己找
+        const head = dshText(readAt(0, Math.min(size, 65536)));
+        for(const line of head.split(/\r?\n/)) { try { const d=JSON.parse(line); if(d.type==='session'&&d.cwd) { result.project=d.cwd; break; } } catch(_) {} }
+        // 尾部可能被大段工具输出占满，把用户/助手消息挤出窗口：逐级放大再读，最多 2 MiB
+        for(let bytes=maxBytes;;bytes*=4) {
+          const start=Math.max(0,size-bytes);
+          tail=dshText(readAt(start,size-start));
+          result.truncated=start>0;
+          if(DSH_USER.test(tail)||start===0||bytes>=16*MAX_BYTES) break;
         }
       } else {
-        tail = buf.toString('utf8');
+        const start = Math.max(0, size - maxBytes);
+        if (start > 0) {
+          const head = readAt(0, Math.min(MAX_BYTES,size));
+          for(const line of head.toString('utf8').split(/\r?\n/)) { try { const d=JSON.parse(line); const p=d.payload||d.message||d; if(p.cwd||d.cwd) {result.project=p.cwd||d.cwd;break;} } catch(_) {} }
+        }
+        tail = readAt(start, size - start).toString('utf8');
+        result.truncated = start > 0;
         if (start > 0) tail = tail.slice(tail.indexOf('\n') + 1);
       }
     } finally { fs.closeSync(fd); }
@@ -164,7 +182,16 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
           const data=d.data||{};
           if(d.type==='tool/call') result.workspaceHints.push(...workspaceHints(data.arguments));
           if(d.type==='user/message' && (!data.source||data.source.kind==='user')) {const text=textOf(data.content);if(text)result.messages.push({role:'user',text});}
-          if(d.type==='assistant/message') {const text=textOf(data.message?.content);if(text)result.messages.push({role:'assistant',text});}
+          if(d.type==='assistant/message') {
+            const text=textOf(data.message?.content);
+            if(text)result.messages.push({role:'assistant',text});
+            // 工具型回复（reasoning + tool-call）没有正文：留一行调用名，接手方才知道刚才在干什么，
+            // 也能保证尾部只剩工具回合时不至于「没有可读文本」
+            else {
+              const calls=(Array.isArray(data.message?.content)?data.message.content:[]).filter(c=>c&&/^tool[-_]call$/.test(String(c.type))).map(c=>c.name).filter(Boolean);
+              if(calls.length)result.messages.push({role:'assistant',text:`[工具调用 ${[...new Set(calls)].join(', ')}]`});
+            }
+          }
           continue;
         }
         let role = p.role || (d.type === 'user' || d.type === 'assistant' ? d.type : '');

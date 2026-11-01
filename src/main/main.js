@@ -887,16 +887,18 @@ function probeSources() {
 }
 function currentHandoffSource() { return lastAgentWin && winsnap.titledWindows().some((w) => w.hwnd === lastAgentWin.hwnd) ? lastAgentWin : null; }
 let transferDialog = null;
+const TRANSFER_MAX_H = 440;
 function placeTransferMenu(height) {
   const dialog=transferDialog;if(!dialog||dialog.win.isDestroyed()||!petWin||petWin.isDestroyed())return;
-  const pet=petRect(),area=screen.getDisplayMatching(pet).workArea;
-  const width=Math.min(300,area.width-16),requested=Math.max(100,Math.min(Number(height)||dialog.win.getBounds().height,440,area.height-16));
-  if(!dialog.anchor)dialog.anchor=require('../shared/transfer-flow').beside(pet,area,width,requested,8,dialog.openPoint);
-  const pos={x:Math.max(area.x+8,Math.min(dialog.anchor.x,area.x+area.width-width-8)),y:Math.max(area.y+8,Math.min(dialog.anchor.y,area.y+area.height-108))};
-  const h=Math.min(requested,area.y+area.height-pos.y-8);
-  const next={...pos,width,height:Math.ceil(h)},prev=dialog.win.getBounds();
+  const pet=petRect(),area=screen.getDisplayMatching(pet).workArea,flow=require('../shared/transfer-flow');
+  const width=Math.min(300,area.width-16),limit=Math.min(TRANSFER_MAX_H,area.height-16);
+  const requested=Math.max(100,Math.min(Number(height)||dialog.win.getBounds().height,limit));
+  // 锚点按「最高一页」预留：先短后长时窗口只往下长。以前按首次高度算锚点，
+  // 桌宠在屏幕下半屏时后面更长的页面会被压扁，底部内容看起来像被切掉。
+  if(!dialog.anchor)dialog.anchor=flow.beside(pet,area,width,limit,8,dialog.openPoint);
+  const next=flow.fit(dialog.anchor,area,width,requested),prev=dialog.win.getBounds();
   if(Object.keys(next).some(k=>next[k]!==prev[k]))dialog.win.setBounds(next);
-  if(!dialog.win.isVisible()){dialog.win.show();dialog.win.focus();}
+  if(!dialog.win.isVisible()){dialog.shownAt=Date.now();dialog.win.show();dialog.win.focus();}
 }
 function openHandoffPicker(source) {
   if (QUOTA_ONLY) return;
@@ -908,7 +910,13 @@ function openHandoffPicker(source) {
   transferDialog={win,source:source===undefined?currentHandoffSource():source,targets:launchTargets(),allowedSessions:new Map(),openPoint:screen.getCursorScreenPoint(),anchor:null,workspaceProbe:null};
   win.setMenu(null);win.setAlwaysOnTop(true,'screen-saver',1);win.loadFile(path.join(ROOT,'src','renderer','transfer.html'));
   const fallback=setTimeout(()=>{if(transferDialog?.win===win&&!win.isVisible())placeTransferMenu(380);},800);
-  win.on('blur',()=>setTimeout(()=>{if(!win.isDestroyed()&&!win.isFocused())win.close();},140));
+  win.on('blur',()=>setTimeout(()=>{
+    if(win.isDestroyed()||win.isFocused())return;
+    // 刚显示就被抢焦点（点开菜单的那一下还在传递、工具窗口抢前台）不算「点了外面」，
+    // 否则菜单会闪一下就自己关掉
+    if(Date.now()-(transferDialog?.shownAt||0)<600)return;
+    win.close();
+  },140));
   sendPet('cmd',{name:'menu-open',on:true});
   win.on('closed',()=>{clearTimeout(fallback);if(transferDialog?.win===win)transferDialog=null;sendPet('cmd',{name:'menu-open',on:false});});
 }
@@ -917,11 +925,18 @@ function registerTransferIpc() {
 ipcMain.on('transfer:size',(e,size)=>{if(transferAccess(e)&&Number.isFinite(size?.height))placeTransferMenu(size.height);});
 ipcMain.handle('transfer:data', e=>{
   const dialog=transferAccess(e);if(!dialog)throw new Error('仅转接窗口可读取此信息');
-  const source=dialog.source, cache=sessionsFor(source);
+  const source=dialog.source, cache=sessionsFor(source), sourceKey=source&&handoffSourceKey(source);
   for(const session of cache?.list||[]) dialog.allowedSessions.set(session.file,{kind:cache.kind,file:session.file,name:session.name});
-  const readable=!!(source&&handoffApi.KINDS[handoffSourceKey(source)]);
-  return {sourceLabel:source?.title||'',autoName:cache?.auto||'',readable,canSummarize:readable&&!!quipsKey(),loading:readable&&(!cache||!!sessionPending),hasFile:!!handoff.latest(),colors:(allCharacters().find(c=>c.id===currentCharacter)||CHARACTERS[0]).colors,
-    tools:dialog.targets.map((t,index)=>({index,label:t.spec.label,kindLabel:({'app':'桌面工具','store':'桌面工具','cli':'本机终端','wsl-cli':'WSL 终端','url':'浏览器入口'})[t.spec.kind]||t.spec.kind})),
+  const readable=!!(source&&handoffApi.KINDS[sourceKey]);
+  const fromLatest=handoff.latest();
+  return {sourceLabel:source?.title||'',autoName:cache?.auto||'',readable,canSummarize:readable&&!!quipsKey(),loading:readable&&(!cache||!!sessionPending),hasFile:!!fromLatest,
+    // 用哪个交接文件要写在按钮上：latest.txt 里最后一条可能来自别的项目
+    file:fromLatest?fromLatest.file:'',fileDir:fromLatest?path.basename(path.dirname(fromLatest.file)):'',
+    colors:(allCharacters().find(c=>c.id===currentCharacter)||CHARACTERS[0]).colors,
+    // 来源工具不进目标列表：转到同一个工具只会把指令发回它自己的旧对话
+    tools:dialog.targets.map((t,index)=>({t,index})).filter(x=>x.t.id!==sourceKey).map(({t,index})=>({index,label:t.spec.label,
+      kindLabel:({'app':'桌面工具','store':'桌面工具','cli':'本机终端','wsl-cli':'WSL 终端','url':'浏览器入口'})[t.spec.kind]||t.spec.kind,
+      workspace:launcher.supportsWorkspace(t.spec)})),
     sessions:(cache?.list||[]).map(s=>({file:s.file,name:s.name,project:s.project||'',fresh:s.fresh||''}))};
 });
 ipcMain.handle('transfer:workspace',(e,request)=>{
@@ -944,6 +959,7 @@ ipcMain.handle('transfer:start',(e,request)=>{
   if(QUOTA_ONLY||handoffJob)return {ok:false,error:'当前不可开始新的转接'};
   const target=Number.isInteger(request?.target)?dialog.targets[request.target]:null;
   if(!target||!['direct','summary','file'].includes(request.mode))return {ok:false,error:'请选择目标工具和接手方式'};
+  if(dialog.source&&target.id===handoffSourceKey(dialog.source))return {ok:false,error:'目标工具就是来源工具，请换一个再接'};
   const pin=request.session?dialog.allowedSessions.get(request.session):(dialog.workspaceProbe?.selection===null?dialog.workspaceProbe.pin:null);
   if(request.session&&!pin)return {ok:false,error:'来源会话已失效，请重新选择'};
   const readable=!!(dialog.source&&handoffApi.KINDS[handoffSourceKey(dialog.source)]);
@@ -991,7 +1007,9 @@ function pushHandoff(j = handoffJob) {
   const replaced = j.replaced ? `\n旧版 ${j.replaced} 行已备份` : '';
   const srcLine = j.sourceLabel ? `\n读的是 ${j.sourceLabel}${j.sourceStale ? '（可能不是你正开着的对话）' : ''}` : '';
   const fromLine = j.fromLatest ? `\n用的是最近一次交接：${j.fromLatest}` : '';
-  const detail = j.received ? '指令已发出，气泡马上收起' : j.done ? (j.cancelled ? '已停止后续操作，指令仍可复制' : failed ? j.note || '指令已保留，可复制后手动继续' : j.cli ? `已发送给新终端，等待 AI 接手${replaced}${srcLine}${fromLine}` : `${shortProject ? `工作区：${shortProject}\n` : ''}${j.returning ? (j.prefilled ? '增量指令已预填，确认后发送' : '增量交接已复制，请在原会话粘贴发送') : j.prefilled ? '指令已预填，剪贴板也留了一份' : j.draftPresent ? '保留原草稿，指令在剪贴板' : 'Ctrl+V 粘贴，再回车发送'}${replaced}${srcLine}${fromLine}`) : j.manualSource ? '请在原 AI 对话粘贴并发送指令' : i === 1 ? `${j.sourceLabel ? `读的是 ${j.sourceLabel}${j.sourceStale ? '（可能不是你正开着的对话）' : ''}；` : ''}${cur && cur.d || '写好后会自动打开目标工具'}` : i === 2 ? (shortProject ? `工作区：${shortProject}` : '正在唤起目标工具') : (j.fallback && beforeAnyOk) ? `${j.fallback}，改让原 AI 写交接（会耗来源额度）` : '连按两下 Esc 可取消';
+  // 桌面目标已经开着时，指令会落进旧对话：粘之前必须新建会话，否则接手方会接着旧上下文
+  const paste = j.already && !j.returning ? `${j.already} 已开着：先在它里面新建会话，再 Ctrl+V（否则会接着旧对话）` : 'Ctrl+V 粘贴，再回车发送';
+  const detail = j.received ? '指令已发出，气泡马上收起' : j.done ? (j.cancelled ? '已停止后续操作，指令仍可复制' : failed ? j.note || '指令已保留，可复制后手动继续' : j.cli ? `已发送给新终端，等待 AI 接手${replaced}${srcLine}${fromLine}` : `${shortProject ? `工作区：${shortProject}\n` : ''}${j.returning ? (j.prefilled ? '增量指令已预填，确认后发送' : '增量交接已复制，请在原会话粘贴发送') : j.prefilled ? '指令已预填，剪贴板也留了一份' : j.draftPresent ? '保留原草稿，指令在剪贴板' : paste}${replaced}${srcLine}${fromLine}`) : j.manualSource ? '请在原 AI 对话粘贴并发送指令' : i === 1 ? `${j.sourceLabel ? `读的是 ${j.sourceLabel}${j.sourceStale ? '（可能不是你正开着的对话）' : ''}；` : ''}${cur && cur.d || '写好后会自动打开目标工具'}` : i === 2 ? (shortProject ? `工作区：${shortProject}` : '正在唤起目标工具') : (j.fallback && beforeAnyOk) ? `${j.fallback}，改让原 AI 写交接（会耗来源额度）` : '连按两下 Esc 可取消';
   const view = { id: j.id, target: j.target, heading, detail, project: j.project || '', step: Math.max(1, i + 1), steps: j.steps.map((x) => x.s), done: j.done, cancelled: j.cancelled, failed, manualSource: !!j.manualSource, canCopy: !!j.text,
     progress: j.done ? undefined : j.progress, autoCloseMs: j.received || (j.cli && j.sent) ? 4000 : j.watching ? 30 * 60000 : undefined };
   const said = JSON.stringify(view); if (said === lastSaid) return; lastSaid = said;
@@ -1235,6 +1253,12 @@ async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnl
     job.steps[2].d = launcher.supportsWorkspace(spec) ? (ws ? `工作区 ${path.basename(ws)}` : '由接手 AI 从来源记录定位工作区') : '不支持指定工作区';
     jobStep(job, 2, 'run');
     if (!cli) {
+      // 桌面应用已经开着时，再启动只会把它唤到前台而不是新开对话：接手指令会落进旧对话，
+      // 目标 AI 就照着旧上下文（甚至旧 HANDOFF）开工。先在气泡里说清楚要新建会话。
+      // Codex 走 codex://threads/new 本来就会新开线程，不用提示。
+      let already = null;
+      if (!returnSession && spec.kind === 'app') { try { already = launcher.isRunning(spec) ? spec.label : null; } catch (_) { already = null; } }
+      if (already) job.already = already;
       let r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, prompt: job.text, session: returnSession, handoff: true });
       if (!r.ok && returnSession && !job.cancelled) {
         job.returning = false;

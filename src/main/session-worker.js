@@ -2,7 +2,7 @@
 const handoffApi = require('./handoff-api');
 function scan({ kind, dirs, title }) {
   let list = [];
-  try { list = handoffApi.recentSessions(kind, dirs, 8); } catch (_) { /* 读不到就不列 */ }
+  try { list = handoffApi.recentSessions(kind, dirs, 12); } catch (_) { /* 读不到就不列 */ }
   // 自动挑的是哪个会话直接写出来：跟真正交接时同一个 newestTranscript 规则
   let auto = '';
   if (list.length >= 2) {
