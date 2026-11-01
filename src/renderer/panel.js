@@ -10,16 +10,30 @@
     document.documentElement.style.setProperty('--line', pal[0]); document.documentElement.style.setProperty('--text', pal[1]); document.documentElement.style.setProperty('--hint', pal[2]);
     const cur = (d.characters || []).find((c) => c.id === d.character);
     $('#why').textContent = (cur ? cur.name : (d.character || '')) + (d.why ? ' · ' + d.why : '');
+    const nowSec = Date.now() / 1000;
+    // 送额度待领取 / 额度卡住的出路提示：点一下标记已读，停止重复提醒
+    for (const c of d.giftClaims || []) {
+      const stuck = c.kind === 'stuck';
+      const val = stuck
+        ? (c.resetsAt ? fmtLeft(c.resetsAt - nowSec) + '后重置' : '点击知道了')
+        : (Number.isFinite(c.remaining) ? '剩 ' + c.remaining.toLocaleString() + ' · ' : '') + (c.resetsAt ? fmtLeft(c.resetsAt - nowSec) + '后过期' : '点击领取');
+      rows.push(`<div class="row claim" data-claim="${esc(c.key)}" title="点一下标记已读，停止提醒"><span class="k">${stuck ? '💡' : '🎁'} ${esc(c.providerName)} ${stuck ? esc(c.label) + '用完了' : '待领取'}</span><span class="v">${val}</span></div>`);
+    }
     for (const p of (d.config.providers || []).filter((x) => x.enabled)) {
       const s = d.snapshots[p.id]; const led = d.ledgers[p.id];
       if (!s) { rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v stale">…</span></div>`); continue; }
-      if (!s.ok && !s.stale) { rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v err" title="${esc(s.error)}">${esc((s.error || '失败').slice(0, 22))}</span></div>`); continue; }
+      if (!s.ok && !s.stale) { rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.unconfigured ? ' stale' : ' err'}" title="${esc(s.error)}">${s.unconfigured ? '未配置' : esc((s.error || '失败').slice(0, 22))}</span></div>`); continue; }
       if (window.PetUsage.isRelay(p)) {
         const metric = window.PetUsage.relayMetric(s, led);
         rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.stale ? ' stale' : ''}" title="${esc(metric.hint)}">${metric.label} ${fmtMoney(metric.value, metric.currency)}</span></div>`);
       }
       else if (s.balance !== null && s.balance !== undefined) rows.push(`<div class="row"><span class="k">${esc(p.name)}</span><span class="v${s.stale ? ' stale' : ''}">${fmtMoney(s.balance, s.currency)}${led && led.todayUsage ? ` <span class="k">今 -${fmtMoney(led.todayUsage, s.currency)}</span>` : ''}</span></div>`);
-      else for (const w of s.windows || []) rows.push(`<div class="row"><span class="k">${esc(p.name)} ${esc(w.label)}</span><span class="v${s.stale ? ' stale' : ''}" style="${w.usedPercent >= (Number(p.warnPercent) || 90) ? 'color:#e0433f' : ''}">${Math.round(w.usedPercent)}%${w.resetsAt ? ` <span class="k">${fmtLeft(w.resetsAt - Date.now() / 1000)}</span>` : ''}</span></div>`);
+      else for (const w of s.windows || []) {
+        const rem = Number.isFinite(w.remaining) ? `剩 ${w.remaining.toLocaleString()} · ` : '';
+        const reset = w.resetsAt ? `${fmtLeft(w.resetsAt - nowSec)}后重置` : '';
+        const tip = [Number.isFinite(w.remaining) ? `剩余 ${w.remaining.toLocaleString()}` : '', w.resetsAt ? `重置/过期 ${new Date(w.resetsAt * 1000).toLocaleString()}` : ''].filter(Boolean).join(' · ');
+        rows.push(`<div class="row"><span class="k">${esc(p.name)} ${esc(w.label)}</span><span class="v${s.stale ? ' stale' : ''}" style="${w.usedPercent >= (Number(p.warnPercent) || 90) ? 'color:#e0433f' : ''}"${tip ? ` title="${esc(tip)}"` : ''}>${Math.round(w.usedPercent)}% <span class="k">${rem}${reset}</span></span></div>`);
+      }
     }
     $('#info').innerHTML = rows.join('') || '<div class="row"><span class="k">还没有启用的数据源</span></div>';
     const sel = $('[data-cfg=character]'); sel.innerHTML = '<option value="auto">自动（跟随 agent）</option>' + (d.characters || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); sel.value = ap.character || 'auto';
@@ -27,6 +41,7 @@
     $('[data-cfg=sound]').value = ap.sound; $('[data-cfg=volume]').value = ap.volume; $('[data-cfg=peakMode]').value = ap.peakMode;
     for (const k of ['bubbleOn', 'quipsOn', 'snapWindows', 'alwaysOnTop']) $(`[data-cfg=${k}]`).checked = !!ap[k];
     // 启动按钮独占一行，正常长度都能完整显示；名字特别长时先省掉「打开」，再不行才省略号 + 悬停看全称
+    $('#transfer-btn').hidden = !!d.quotaOnly;
     const lb = $('#launch-btn');
     if (lb) {
       lb.hidden = !!d.quotaOnly;
@@ -41,7 +56,8 @@
   }
   document.addEventListener('change', (e) => { const k = e.target.dataset.cfg; if (!k) return; let v = e.target.type === 'checkbox' ? e.target.checked : e.target.value; if (k === 'scale' || k === 'volume') v = Number(v); window.pet.send('appearance:set', { [k]: v }); });
   document.addEventListener('input', (e) => { if (e.target.dataset.cfg === 'scale') $('#scale-val').textContent = Math.round(e.target.value * 100) + '%'; });
-  document.addEventListener('click', (e) => { const a = e.target.closest('[data-act]'); if (!a) return; const act = a.dataset.act; if (act === 'launch') { window.pet.send('launch'); window.pet.send('panel:close'); } else if (act === 'refresh') window.pet.send('refresh'); else if (act === 'bubble') { window.pet.send('cmd:pet', { name: 'bubble' }); window.pet.send('panel:close'); } else if (act === 'settings') { window.pet.send('open-settings', 'providers'); window.pet.send('panel:close'); } else if (act === 'quit') window.pet.send('quit'); });
+  document.addEventListener('click', (e) => { const a = e.target.closest('[data-act]'); if (!a) return; const act = a.dataset.act; if (act === 'launch') { window.pet.send('launch'); window.pet.send('panel:close'); } else if (act === 'transfer') window.pet.send('transfer:open'); else if (act === 'refresh') window.pet.send('refresh'); else if (act === 'bubble') { window.pet.send('cmd:pet', { name: 'bubble' }); window.pet.send('panel:close'); } else if (act === 'settings') { window.pet.send('open-settings', 'providers'); window.pet.send('panel:close'); } else if (act === 'quit') window.pet.send('quit'); });
+  document.addEventListener('click', (e) => { const c = e.target.closest('[data-claim]'); if (!c) return; window.pet.send('gift:claim', c.dataset.claim); });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.pet.send('panel:close'); });
   window.pet.on('data', render);
   window.pet.send('panel:ready');

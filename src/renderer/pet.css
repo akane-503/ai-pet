@@ -7,8 +7,8 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .body.pressed { transform: scale(.97); }
 .img-wrap { position: absolute; right: 0; bottom: 0; width: 59.45%; height: 59.45%; transform-origin: 50% 100%; transition: transform .12s ease-out; }
 .img { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; pointer-events: none; transform-origin: 50% 100%; transform: scaleX(var(--chub)); filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)); }
-.idle .img { animation: bob 3.4s ease-in-out infinite; }
-@keyframes bob { 0%, 100% { transform: translateY(0) scaleX(var(--chub)); } 50% { transform: translateY(calc(var(--u) * -8)) scaleX(var(--chub)); } }
+.idle .img { animation: breathe 3.4s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { transform: scale(var(--chub), 1); } 50% { transform: scale(calc(var(--chub) * 1.01), 1.022); } }
 .hop .body { animation: hop .5s cubic-bezier(.3,1.5,.6,1); }
 @keyframes hop { 0% { transform: translateY(0) } 35% { transform: translateY(calc(var(--u) * -40)) scale(1.03) } 70% { transform: translateY(0) scale(.99) } 100% { transform: none } }
 
@@ -44,9 +44,9 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .bubble.open.compact .puff-text { opacity: 1; transition-delay: .55s; }
 .root.left .puff-text { transform: translate(-50%, -50%) scaleX(-1); }
 .bubble.compact .text { width: 61%; top: 47%; white-space: normal; }
-.bubble.notice .label, .bubble.compact .label { font-size: max(11px, calc(var(--u) * 43)); letter-spacing: 0; line-height: 1.25; }
-.bubble.notice .amount, .bubble.compact .amount { font-size: max(11px, calc(var(--u) * 39)); font-weight: 600; line-height: 1.35; margin-top: calc(var(--u) * 12); }
-.bubble.notice .hint, .bubble.compact .hint { color: var(--hint); font-size: max(10px, calc(var(--u) * 31)); min-height: 0; line-height: 1.25; }
+.bubble.notice .label, .bubble.compact .label { font-size: max(13px, calc(var(--u) * 56)); letter-spacing: 0; line-height: 1.25; }
+.bubble.notice .amount, .bubble.compact .amount { font-size: max(12px, calc(var(--u) * 50)); font-weight: 600; line-height: 1.35; margin-top: calc(var(--u) * 12); }
+.bubble.notice .hint, .bubble.compact .hint { color: var(--hint); font-size: max(11px, calc(var(--u) * 40)); min-height: 0; line-height: 1.25; }
 .bubble.notice .wrap, .bubble.compact .wrap { max-width: none; overflow-wrap: anywhere; }
 .bubble.compact .label { font-size: calc(var(--u) * 62); }
 .bubble.compact .amount { font-size: calc(var(--u) * 72); font-weight: 800; margin-top: calc(var(--u) * 8); }

@@ -92,9 +92,14 @@ async function official(p, s, det) {
   const cred = readJson(credPath);
   const token = cred && (cred.access_token || cred.accessToken);
   if (!token) {
+    const direct = !!(p.apiKey || det.apiKey);
     s.error = p.auth === 'oauth' || det.authType === 'oauth-personal'
       ? '没找到 Gemini CLI 登录凭据（~/.gemini/oauth_creds.json），先用 gemini 登录一次'
-      : 'Gemini 走的是 API Key 直连，没有额度接口；填中转站地址，或用 Gemini CLI OAuth 登录';
+      : direct
+        ? 'Gemini 走的是 API Key 直连，查不到剩余额度；填中转站地址可显示余额，或用 Gemini CLI OAuth 登录'
+        : '没找到 Gemini 配置：没有 CLI 登录（~/.gemini），也没填 API Key 或中转站地址，任选一种配好';
+    // 启用但什么都没配是「未配置」，不是失败：气泡/面板按中性提示渲染，不红不报错
+    s.unconfigured = !direct && p.auth !== 'oauth' && det.authType !== 'oauth-personal';
     return s;
   }
   const exp = num(pick(cred, ['expiry_date', 'expiresAt']));

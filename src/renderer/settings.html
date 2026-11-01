@@ -9,18 +9,40 @@
 <body>
 <aside id="nav">
   <div class="brand">AI 桌宠<small>额度 · 角色 · 提醒</small></div>
-  <a href="#providers" data-tab="providers">数据源</a>
+  <a href="#tools" data-tab="tools">工具与环境</a>
+  <a href="#providers" data-tab="providers">账号与额度</a>
+  <a href="#takeover" data-tab="takeover">接手与转接</a>
   <a href="#notify" data-tab="notify">通知</a>
   <a href="#appearance" data-tab="appearance">外观</a>
-  <a href="#activity" data-tab="activity">活跃检测</a>
-  <a href="#launch" data-tab="launch">打开工具</a>
+  <a href="#activity" data-tab="activity">检测规则</a>
+  <a href="#launch" data-tab="launch">启动覆盖</a>
   <a href="#notifications" data-tab="notifications">消息中心 <span id="unread" class="pill hidden"></span></a>
   <a href="#about" data-tab="about">关于</a>
   <div class="nav-foot"><button id="save" class="primary">保存设置</button><div id="save-msg"></div></div>
 </aside>
 <main>
-  <section id="tab-providers" class="tab">
-    <h1>数据源</h1>
+  <section id="tab-tools" class="tab">
+    <div class="page-heading"><div><h1>这台机器上的 AI 工具</h1><p class="hint">启动、额度、模型跟随和接手能力，放在一起核对。</p></div><button id="environment-scan">重新检测</button></div>
+    <div id="environment-status" class="hint" role="status">正在读取本机环境…</div>
+    <div class="tool-controls"><input id="tool-search" type="search" placeholder="搜索工具、路径或能力" aria-label="搜索工具"><select id="tool-filter" aria-label="工具范围"><option value="local">本机与已配置</option><option value="all">全部支持的工具</option><option value="attention">需要配置</option></select></div>
+    <div id="environment-list"></div>
+    <details class="card extension"><summary>扩展工具接入</summary><p class="hint">添加新工具的识别规则、会话目录或模型状态文件。现有配置始终优先，重新检测不会替你改动它们。</p>
+    <h2>自定义 Agent</h2>
+    <p class="hint">按进程名或窗口标题认出工具，桌宠就切过去；没有自己的立绘时借用一个内置角色。填了「会话目录」还会像内置工具一样参与活跃检测（按目录最近写入判断你正在用谁）。额度在「数据源」里加一个，对应角色选它。启动路径不用填，会从运行中的进程、安装记录、快捷方式和各盘目录里自动找 exe，找不到才开网页。</p>
+    <div id="agents"></div>
+    <div class="toolbar"><select id="agent-preset" aria-label="Agent 预设"><option value="">自定义…</option></select><button id="add-agent">＋ 添加 Agent</button></div>
+    </details>
+  </section>
+  <section id="tab-takeover" class="tab hidden">
+    <h1>接手与转接</h1>
+    <div class="card"><label><input id="feature-handoff" type="checkbox"> 启用工具转接</label><p class="hint">保存后更新桌宠的转接入口。关闭时仍可查看额度、角色和工具配置。</p></div>
+    <p class="hint">直接转接传递本地会话引用，目标 AI 只读取指定会话的尾部，再核对项目现场。读取器不调用模型，也不上传会话。</p>
+    <div class="card"><h3>接手来源校验</h3><label class="reference-field">来源会话<input id="takeover-ref" type="text" placeholder="粘贴 zcode:、cursor: 引用或会话文件绝对路径"></label><button id="takeover-check">只读校验</button><pre id="takeover-result" role="status">尚未校验。这里只显示会话信息，不展示聊天正文。</pre></div>
+    <div class="card"><h3>转接前检查</h3><div id="takeover-capabilities"></div><p class="hint">有会话读取能力的工具可作为直接转接来源。目标工具还需支持本机工具操作；网页入口需要你自行粘贴指令。源会话定位有歧义时，在桌宠的来源会话菜单中明确选择。</p></div>
+  </section>
+
+  <section id="tab-providers" class="tab hidden">
+    <h1>账号与额度</h1>
     <p class="hint">每个数据源对应一个额度来源。余额类（DeepSeek / 中转站）显示金额，窗口类（Codex / GLM / Claude 订阅 / Gemini CLI）显示窗口用量。Gemini CLI 会自动读 ~/.gemini：有中转站地址就按中转站计费显示，没地址就按官方登录查配额。所有凭据只存在本机 <code id="userdata"></code>。</p>
     <div class="toolbar">
       <select id="add-type"></select><button id="add-provider">＋ 添加</button>
@@ -42,14 +64,20 @@
       <h3>提醒内容</h3>
       <label><input type="checkbox" data-n="resets"> 额度窗口重置（Codex 5h/7d、GLM、Claude）</label>
       <label><input type="checkbox" data-n="gifts"> 送额度 / 送 token / 提前重置 / 充值到账</label>
+      <label><input type="checkbox" data-n="stuckTips"> 额度用完时提示出路（ZCode 端内重置机会 / Codex credits / 等自动重置）</label>
+      <label>赠送额度重复提醒 <input type="number" data-n="giftRemindMin" min="0" max="1440" step="5" style="width:64px"> 分钟一次（0 = 只提醒一次，点「已领取」停止）</label>
       <label><input type="checkbox" data-n="lowBalance"> 余额不足 / 额度快用完</label>
       <label><input type="checkbox" data-n="newModels"> 模型上新（对比各家 /models 列表与 Codex 模型缓存）</label>
       <label><input type="checkbox" data-n="announcements"> 中转站公告</label>
       <label><input type="checkbox" data-n="rss"> RSS 资讯</label>
+      <label><input type="checkbox" data-n="toolNews"> 模型 / 工具更新及 Tibo 额度预告</label>
     </div>
     <div class="card">
-      <h3>RSS / Atom 订阅（可选）</h3>
-      <p class="hint">用来跟踪官方博客/更新日志，例如 OpenAI、Anthropic、DeepSeek 的新闻页 RSS。网络不通的源会被静默跳过。</p>
+      <h3>更新消息来源</h3>
+      <p class="hint">启用后每 10 分钟检查 Codex、Claude Code、Gemini CLI 正式发布，以及 OpenAI 的 Tibo（@thsottiaux）。Tibo 使用第三方 X 转录，按内容分诊（加量/送额度、预告重置、故障、模型），转推与无关内容不推送；额度类提醒附上你自己账号的当前状态作对照，附原帖链接。预告不代表账号额度已重置。首次只记基线，不刷历史消息。桌宠退出时不会检查。</p>
+      <button id="news-test">检查已启用来源（不发送提醒）</button>
+      <pre id="news-status" aria-live="polite">尚未检查</pre>
+      <h3>自定义 RSS / Atom（需勾选 RSS 资讯）</h3>
       <div id="rss-list"></div>
       <button id="rss-add">＋ 添加订阅</button>
     </div>
@@ -73,6 +101,7 @@
       <label><input type="checkbox" data-a="quipsOn"> 随机台词</label>
       <label>闲置时每隔几分钟说一句 <input type="number" min="0" max="120" data-a="idleQuipMin" style="width:70px"> <span class="hint">0 = 不主动说</span></label>
       <label><input type="checkbox" data-a="alwaysOnTop"> 始终置顶</label>
+      <label><input type="checkbox" data-a="showOverFullscreen"> 其他应用全屏时仍显示桌宠</label>
       <label><input type="checkbox" data-a="snapScreen"> 靠近屏幕边缘时吸附</label>
       <label><input type="checkbox" data-a="snapWindows"> 吸附到其他窗口（坐在窗口顶上、贴窗口两侧，并跟随窗口移动）</label>
     </div>
@@ -97,26 +126,17 @@
     </div>
   </section>
   <section id="tab-activity" class="tab hidden">
-    <h1>活跃检测</h1>
-    <p class="hint">“自动”角色模式下，桌宠根据各 agent 最近的会话写入时间判断你正在用谁：Codex（~/.codex/sessions）、Claude Code（.claude/projects，支持 WSL 路径）、Gemini CLI、Qwen Code、Kimi Work（kimi-agent 状态文件）。Codex 若被路由到 DeepSeek / GLM，会算作对应角色。</p>
-    <div class="card grid2">
-      <label>判定窗口（分钟） <input type="number" min="1" data-act="windowMin" style="width:80px"></label>
-      <label>Codex 目录 <input type="text" data-act="codexDir"></label>
-      <label>Claude 配置目录（留空自动查找） <input type="text" data-act="claudeDir" placeholder="例如 \\wsl.localhost\发行版\home\用户名\.claude"></label>
-      <label>Gemini 目录 <input type="text" data-act="geminiDir"></label>
-      <label>Qwen 目录 <input type="text" data-act="qwenDir"></label>
-      <label>Kimi 数据目录 <input type="text" data-act="kimiDir" placeholder="%APPDATA%\kimi-desktop\kimi-agent"></label>
-    </div>
+    <h1>检测规则</h1>
+    <p class="hint">优先识别前台工具，再参考近期会话写入。默认位置按当前用户环境解析；仅需调整装在其他位置的工具。留空恢复自动探测。</p>
+    <div id="activity-fields" class="card grid2"></div>
     <div class="card"><button id="act-test">立即检测</button><pre id="act-result"></pre></div>
-    <h2>自定义 Agent</h2>
-    <p class="hint">按进程名或窗口标题认出工具，桌宠就切过去；没有自己的立绘时借用一个内置角色。额度在「数据源」里加一个，对应角色选它。启动路径不用填，会从运行中的进程、安装记录、快捷方式和各盘目录里自动找 exe，找不到才开网页。</p>
-    <div id="agents"></div>
-    <div class="toolbar"><select id="agent-preset" aria-label="Agent 预设"><option value="">自定义…</option></select><button id="add-agent">＋ 添加 Agent</button></div>
   </section>
   <section id="tab-launch" class="tab hidden">
-    <h1>打开工具</h1>
-    <p class="hint">双击角色、右键菜单「打开 …」或快捷面板「打开工具」时，按当前角色启动对应的 agent。桌面应用已经开着就只置前不重复开；CLI 每次开一个新终端窗口；网页用默认浏览器打开。留空使用内置默认值。</p>
+    <h1>启动覆盖</h1>
+    <div class="toolbar"><input id="launch-search" type="search" placeholder="搜索工具入口" aria-label="搜索工具入口"><label><input type="checkbox" id="launch-show-all"> 显示未安装工具</label></div>
+    <p class="hint">双击角色、右键菜单「打开 …」或快捷面板「打开工具」时，按当前角色启动对应的 agent。桌面应用已经开着就只置前不重复开；CLI 每次开一个新终端窗口；网页用默认浏览器打开。留空使用内置默认值；找不到或装了新工具就点「帮我找」重扫一次本机，填路径时方式会按内容自动判断。</p>
     <div id="launch-list"></div>
+    <datalist id="wsl-distro-list"></datalist>
   </section>
   <section id="tab-notifications" class="tab hidden">
     <h1>消息中心</h1>
@@ -147,6 +167,7 @@
   </section>
 </main>
 <script src="../shared/usage.js"></script>
+<script src="../shared/launch.js"></script>
 <script src="onboarding.js"></script>
 <script src="settings.js"></script>
 </body>

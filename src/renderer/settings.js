@@ -2,7 +2,7 @@
 (function () {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  let cfg = null, baseline = null, meta = null, data = null;
+  let cfg = null, baseline = null, meta = null, data = null, environment = null;
   const clone = (v) => JSON.parse(JSON.stringify(v));
   function configDiff(before, after) {
     const patch = {};
@@ -19,8 +19,9 @@
     const patch = configDiff(baseline, cfg);
     cfg = await window.pet.invoke('config:set', patch);
     baseline = clone(cfg);
+    if (patch.features) meta = await window.pet.invoke('meta');
     if (patch.agents) { meta = await window.pet.invoke('meta'); launchDefaults = await window.pet.invoke('launch:defaults'); renderProviders(); renderAgents(); }
-    renderAppearance(); renderNotify(); renderLaunch();
+    renderAppearance(); renderNotify(); renderLaunch(); renderEnvironment();
     return cfg;
   }
   function applyTheme(d) {
@@ -52,13 +53,64 @@
 
   // ---------- Tabs ----------
   function goto(tab) {
+    if (!document.getElementById('tab-' + tab)) tab = 'tools';
     document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + tab));
     if (tab === 'notifications') renderNotifications();
     if (tab === 'appearance') renderPreview();
+    if (tab === 'tools' && !environment && cfg) scanEnvironment();
   }
   document.querySelectorAll('#nav a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); location.hash = a.dataset.tab; goto(a.dataset.tab); }));
   window.pet.on('goto', goto);
+  window.addEventListener('hashchange', () => goto(location.hash.slice(1)));
+
+  // ---------- Machine environment ----------
+  let scanning = false;
+  async function scanEnvironment() {
+    if(scanning || !cfg) return;
+    scanning = true; $('#environment-scan').disabled = true;
+    $('#environment-status').textContent = '正在检查运行进程、安装入口、数据目录与读取能力…';
+    try {
+      environment = await window.pet.invoke('environment:scan', { agents:cfg.agents, launch:cfg.launch, activity:cfg.activity, providers:cfg.providers.map(p => ({id:p.id,type:p.type,name:p.name,enabled:p.enabled,dbPath:p.dbPath})) });
+      launchDefaults = await window.pet.invoke('launch:defaults');
+      renderActivity(); renderEnvironment(); renderLaunch();
+      $('#environment-status').textContent = `本机发现 ${environment.tools.filter(t=>t.installed||t.dataFound).length} 个工具环境，${environment.tools.filter(t=>t.modelSupported).length} 个可读取模型状态。检查于 ${new Date(environment.at).toLocaleTimeString()}。未修改设置。`;
+    } catch(e) { $('#environment-status').textContent = '检测失败：' + e.message; }
+    finally { scanning = false; $('#environment-scan').disabled = false; }
+  }
+  function renderEnvironment() {
+    if(!environment) return;
+    const query = $('#tool-search').value.trim().toLowerCase(), filter = $('#tool-filter').value;
+    const tools = environment.tools.filter(t => (filter === 'all' || filter === 'attention' ? filter !== 'attention' || ((t.installed||t.configured||t.dataFound)&&(!t.launchAvailable||!t.dataFound)) : t.installed||t.configured||t.dataFound) && `${t.name} ${t.entry} ${t.dataPath} ${t.model?.label||''}`.toLowerCase().includes(query));
+    $('#environment-list').innerHTML = tools.map(t=>`<article class="tool-row" data-tool="${esc(t.id)}">
+      <div class="tool-heading"><h2>${esc(t.name)}</h2><span class="status ${t.installed?'available':''}">${t.installed?'入口可用':t.dataFound?'发现本地数据':t.configured?'已配置，待检查':'未发现本机入口'}</span></div>
+      <div class="tool-capabilities"><span>额度：${t.providers.some(p=>p.enabled)?'已关联':t.providers.length?'未启用':'可手动关联'}</span><span>模型：${esc(t.model?.ok?(t.model.auto?`${t.model.label || '自动'}（未公开实际模型）`:t.model.label):t.modelSupported?'读取失败':'未提供读取器')}</span><span>直接转接来源：${t.handoffReadable?'可读取':t.transcript?'未找到会话位置':'暂不支持'}</span></div>
+      <p class="entry-path">${esc(t.entry || '可在启动覆盖中设置入口')}</p>
+      <div class="tool-actions"><button data-tool-action="launch">启动设置</button>${t.activityKey?'<button data-tool-action="activity">检测规则</button>':''}<button data-tool-action="providers">账号与额度</button>${t.preset?'<button data-tool-action="add">添加识别规则</button>':''}</div>
+      <details><summary>能力与路径详情</summary><dl><dt>本地数据</dt><dd>${esc(t.dataPath || '未配置')}（${t.dataFound?'存在':'未找到'}）</dd><dt>接手技能</dt><dd>${t.skillInstalled?'已发现技能文件；实际调用仍需目标工具支持':'未发现技能文件，转接时使用文字指令'}</dd><dt>模型说明</dt><dd>${esc(t.model?.error || t.modelNote || '模型不可识别或使用 Auto 时保留默认形象。可为自定义工具指定本地状态文件。')}</dd></dl></details>
+    </article>`).join('') || '<p class="empty-state">没有匹配的工具。可查看全部支持的工具，或在下方添加自定义工具。</p>';
+    $('#takeover-capabilities').innerHTML = environment.tools.filter(t=>t.transcript).map(t=>`<div class="capability-line"><b>${esc(t.name)}</b><span>${t.handoffReadable?'发现来源数据':'来源路径未就绪'}</span><span>${t.skillInstalled?'已发现接手技能':'使用文字指令接手'}</span></div>`).join('');
+  }
+  $('#environment-scan').addEventListener('click', scanEnvironment);
+  $('#tool-search').addEventListener('input', renderEnvironment);
+  $('#tool-filter').addEventListener('change', renderEnvironment);
+  $('#launch-search').addEventListener('input', renderLaunch);
+  $('#launch-show-all').addEventListener('change', renderLaunch);
+  $('#environment-list').addEventListener('click', e=> {
+    const action=e.target.dataset.toolAction, row=e.target.closest('[data-tool]'); if(!action||!row) return;
+    const t=environment.tools.find(t=>t.id===row.dataset.tool);
+    if(action==='add') { if(t.preset && !(cfg.agents||[]).some(a=>a.id===t.id)) { (cfg.agents=cfg.agents||[]).push({...t.preset}); renderAgents(); renderAgentPresets(); e.target.textContent='已添加，保存后生效'; e.target.disabled=true; } return; }
+    location.hash=action; goto(action);
+    if(action==='launch') { $('#launch-search').value=t.name; $('#launch-show-all').checked=true; renderLaunch(); }
+    if(action==='activity') document.querySelector(`[data-act="${t.activityKey}"]`)?.focus();
+  });
+  $('#feature-handoff').addEventListener('change', e => { cfg.features = { ...(cfg.features || {}), handoff:e.target.checked }; $('#save-msg').textContent='有未保存的更改'; });
+  $('#takeover-check').addEventListener('click', async e=> {
+    e.target.disabled=true; $('#takeover-result').textContent='正在只读校验…';
+    try { const r=await window.pet.invoke('takeover:inspect',$('#takeover-ref').value.trim()); $('#takeover-result').textContent=r.ok?`${r.title || '指定会话'}\n项目：${r.project || '未识别，转接时需选择'}\n尾部可读消息：${r.messages}${r.truncated?'（有截断）':''}${r.repaired?'\n已修复缺失的路径分隔符':''}\n引用：${r.ref}`:'无法接手：'+r.error; }
+    catch(err) { $('#takeover-result').textContent='校验失败：'+err.message; }
+    finally { e.target.disabled=false; }
+  });
 
   // ---------- Providers ----------
   function providerCard(p, i) {
@@ -74,7 +126,7 @@
     return `<div class="prov ${p.enabled ? '' : 'off'}" data-i="${i}">
       <div class="head"><input type="checkbox" data-f="enabled" ${p.enabled ? 'checked' : ''} title="启用"><input class="name" data-f="name" value="${esc(p.name)}"><span class="type">${esc(m.label)}</span></div>
       <div class="prov-status hint"></div>
-      <div class="fields">${fields}<label><span>对应角色</span><select data-f="character">${chars}</select></label></div>
+      <details class="provider-config"><summary>连接与提醒设置</summary><div class="fields">${fields}<label><span>对应角色</span><select data-f="character">${chars}</select></label></div></details>
       <div class="foot"><button data-act="test">测试</button><span class="test-result"></span><button class="danger" data-act="del">删除</button></div>
     </div>`;
   }
@@ -123,7 +175,7 @@
   $('#add-provider').addEventListener('click', () => {
     const type = $('#add-type').value; const m = meta.types[type];
     const p = { id: type + '-' + Date.now().toString(36), type, name: m.label, enabled: true, character: m.defaultCharacter };
-    if (type === 'zhipu') p.baseUrl = 'https://open.bigmodel.cn';
+    if (type === 'zhipu') p.baseUrl = 'https://api.z.ai';
     if (m.kind === 'balance') p.lowBalance = 1; else p.warnPercent = 90;
     cfg.providers.push(p); renderProviders();
     window.scrollTo(0, document.body.scrollHeight);
@@ -153,12 +205,24 @@
   function renderNotify() {
     document.querySelectorAll('[data-n]').forEach((el) => { const k = el.dataset.n; if (el.type === 'checkbox') el.checked = !!cfg.notify[k]; else el.value = cfg.notify[k] ?? ''; });
     renderRss();
+    renderNewsStatus(data && data.newsStatus);
   }
   document.querySelectorAll('[data-n]').forEach((el) => el.addEventListener('input', () => { cfg.notify[el.dataset.n] = el.type === 'checkbox' ? el.checked : el.value; }));
   function renderRss() {
     $('#rss-list').innerHTML = (cfg.notify.rssFeeds || []).map((f, i) => `<div class="rss-row" data-i="${i}"><input type="checkbox" data-r="enabled" ${f.enabled !== false ? 'checked' : ''}><input type="text" data-r="name" value="${esc(f.name)}" placeholder="名称" style="max-width:140px"><input type="url" data-r="url" value="${esc(f.url)}" placeholder="https://.../feed.xml"><button data-r="del">×</button></div>`).join('');
   }
   $('#rss-add').addEventListener('click', () => { (cfg.notify.rssFeeds = cfg.notify.rssFeeds || []).push({ name: '', url: '', enabled: true }); renderRss(); });
+  function renderNewsStatus(status) {
+    $('#news-status').textContent = Object.values(status || {}).map(s => `${s.ok ? '✓' : '×'} ${s.name}：${s.ok ? (s.stale ? '最近条目超过 7 天，请留意源是否停更' : '可读取') : s.error}${s.latest ? '\n最新条目：' + s.latest : ''}`).join('\n') || '尚未检查；启用并保存后会自动建立基线。';
+  }
+  $('#news-test').addEventListener('click', async (e) => {
+    e.target.disabled = true; $('#news-status').textContent = '正在检查…';
+    try {
+      const status = await window.pet.invoke('news:check', cfg.notify);
+      renderNewsStatus(status);
+    } catch (err) { $('#news-status').textContent = '检查失败：' + err.message; }
+    finally { e.target.disabled = false; }
+  });
   $('#rss-list').addEventListener('input', (e) => { const row = e.target.closest('.rss-row'); const f = cfg.notify.rssFeeds[+row.dataset.i]; const k = e.target.dataset.r; f[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; });
   $('#rss-list').addEventListener('click', (e) => { if (e.target.dataset.r === 'del') { cfg.notify.rssFeeds.splice(+e.target.closest('.rss-row').dataset.i, 1); renderRss(); } });
 
@@ -207,12 +271,20 @@
   window.pet.on('quips:progress', (p) => { $('#quips-msg').textContent = p.text; });
 
   // ---------- Activity ----------
-  function renderActivity() { document.querySelectorAll('[data-act]').forEach((el) => { el.value = cfg.activity[el.dataset.act] ?? ''; }); }
-  document.querySelectorAll('[data-act]').forEach((el) => el.addEventListener('input', () => { cfg.activity[el.dataset.act] = el.type === 'number' ? Number(el.value) : el.value; }));
+  function renderActivity() {
+    $('#activity-fields').innerHTML = (environment?.activityFields || []).map(f => `<label>${esc(f.label)}<input type="${f.type === 'number' ? 'number' : 'text'}" ${f.min ? `min="${f.min}"` : ''} data-act="${esc(f.key)}" value="${esc(cfg.activity[f.key] ?? '')}" placeholder="${esc(f.suggested || '')}">${f.type !== 'number' ? `<button data-pick-activity="${esc(f.key)}" data-path-kind="${esc(f.type)}">选择</button><button data-auto-activity="${esc(f.key)}">自动</button>` : ''}</label>`).join('');
+  }
+  $('#activity-fields').addEventListener('input', e => { const key = e.target.dataset.act; if(key) cfg.activity[key] = e.target.type === 'number' ? Number(e.target.value) : e.target.value; });
+  $('#activity-fields').addEventListener('click', async e => {
+    if(e.target.dataset.autoActivity) { cfg.activity[e.target.dataset.autoActivity] = ''; renderActivity(); return; }
+    const key = e.target.dataset.pickActivity; if(!key) return;
+    const file = await window.pet.invoke(e.target.dataset.pathKind === 'file' ? 'pick-file' : 'pick-directory');
+    if(file) { cfg.activity[key] = file; renderActivity(); }
+  });
   $('#act-test').addEventListener('click', async () => { const r = await window.pet.invoke('activity:now'); $('#act-result').textContent = JSON.stringify({ active: r.active, at: r.at ? new Date(r.at).toLocaleString() : null, details: Object.fromEntries(Object.entries(r.details).map(([k, v]) => [k, v ? new Date(v).toLocaleString() : null])) }, null, 2); });
 
   // ---------- Agents ----------
-  const AGENT_FIELDS = [['name', '名称'], ['process', '进程名（| 分隔）'], ['title', '窗口标题正则'], ['dir', '会话目录（可选）'], ['url', '网页地址'], ['image', '立绘图片路径（可选）']];
+  const AGENT_FIELDS = [['name', '名称'], ['process', '进程名（| 分隔）'], ['title', '窗口标题正则'], ['dir', '会话目录（可选）'], ['url', '网页地址'], ['image', '立绘图片路径（可选）'], ['modelFile', '模型状态文件（文本 / JSON）'], ['modelPath', 'JSON 模型字段（例如 chat.model）'], ['dbPath', '模型数据库覆盖（读取器支持时）']];
   function renderAgents() {
     cfg.agents = cfg.agents || [];
     const looks = meta.characters.filter((c) => !c.look);
@@ -225,7 +297,7 @@
   $('#agents').addEventListener('click', (e) => { const i = e.target.dataset.delAgent; if (i !== undefined && confirm(`删除「${cfg.agents[+i].name}」？`)) { cfg.agents.splice(+i, 1); renderAgents(); renderAgentPresets(); } });
   let presets = [];
   function renderAgentPresets() {
-    const left = presets.filter((p) => !cfg.agents.some((a) => a.id === p.id));
+    const left = presets.filter((p) => !(cfg?.agents || []).some((a) => a.id === p.id));
     $('#agent-preset').innerHTML = left.map((p) => `<option value="${p.id}">${esc(p.name)}${p.installed ? '（本机已装）' : ''}</option>`).join('') + '<option value="">自定义…</option>';
   }
   window.pet.invoke('agents:presets').then((r) => { presets = r; renderAgentPresets(); });
@@ -238,11 +310,17 @@
 
   // ---------- Launch ----------
   let launchDefaults = {};
+  const launchFindMiss = {};
   const KINDS = [['app', '桌面应用 (exe)'], ['store', '商店应用 (AppID)'], ['wsl-cli', 'WSL 里的 CLI'], ['cli', 'Windows CLI'], ['url', '网页']];
   const CLI_COMMANDS = { claude: 'claude', codex: 'codex', gemini: 'gemini', qwen: 'qwen' };
   function renderLaunch() {
     cfg.launch = cfg.launch || {};
-    $('#launch-list').innerHTML = meta.characters.map((c) => {
+    const query = ($('#launch-search').value || '').toLowerCase();
+    const showAll = $('#launch-show-all').checked;
+    $('#launch-list').innerHTML = meta.characters.filter(c => {
+      const tool = environment?.tools.find(t => t.id === c.id);
+      return (showAll || !environment || tool?.installed || tool?.configured || tool?.dataFound || cfg.launch[c.id]) && (!query || `${tool?.name || c.name} ${c.id}`.toLowerCase().includes(query));
+    }).map((c) => {
       const d = launchDefaults[c.id] || {}; const u = cfg.launch[c.id] || {}; const v = { ...d, ...u };
       const custom = !!u.kind;
       const cli = v.kind === 'cli' || v.kind === 'wsl-cli';
@@ -250,18 +328,18 @@
       const targetLabel = v.kind === 'url' ? '网页地址' : v.kind === 'store' ? '应用 AppID' : '应用路径';
       const entry = cli ? v.command : v.target;
       return `<div class="card" data-launch="${c.id}">
-        <h3>${esc(c.name)} <span class="hint" style="display:inline">默认：${esc(d.label || '无')}${custom ? ' · 已自定义' : ''}</span></h3>
+        <h3>${esc(environment?.tools.find(t => t.id === c.id)?.name || d.label || c.name)} <span class="hint" style="display:inline">${custom ? '手动覆盖' : '跟随本机探测'}</span></h3>
         <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px">
           <label>方式 <select data-l="kind">${KINDS.map(([k, n]) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label>名称 <input type="text" data-l="label" value="${esc(v.label || '')}"></label>
-          ${cli ? `<label style="grid-column:1/-1">启动命令 <input type="text" data-l="command" value="${esc(v.command || '')}" placeholder="${esc(CLI_COMMANDS[c.id] || '输入已安装工具的启动命令')}"></label>` : `<label style="grid-column:1/-1">${targetLabel} <input type="text" data-l="target" value="${esc(v.target || '')}">${v.kind === 'app' ? `<button data-pick-exe="${c.id}">选择程序…</button>` : ''}</label>`}
-          ${v.kind === 'wsl-cli' ? `<label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" placeholder="留空 = 默认发行版"></label>` : ''}
+          ${cli ? `<label style="grid-column:1/-1">启动命令 <input type="text" data-l="command" value="${esc(v.command || '')}" placeholder="${esc(CLI_COMMANDS[c.id] || '输入已安装工具的启动命令')}"></label>` : `<label style="grid-column:1/-1">${targetLabel} <input type="text" data-l="target" value="${esc(v.target || '')}" placeholder="路径 / 网址 / 命令，自动判断方式">${v.kind === 'app' ? `<button data-pick-exe="${c.id}">选择程序…</button>` : ''}</label>`}
+          ${v.kind === 'wsl-cli' ? `<label>WSL 发行版 <input type="text" data-l="distro" value="${esc(v.distro || '')}" list="wsl-distro-list" placeholder="留空 = 默认发行版，可下拉选检测到的"></label>` : ''}
           ${workspace ? `<label>默认工作目录 <input type="text" data-l="cwd" value="${esc(v.cwd || '')}" placeholder="留空使用工具默认目录"><button data-pick-workspace="${c.id}">选择文件夹…</button></label>` : ''}
           ${v.kind === 'app' || v.kind === 'store' ? `<label>已开检测（窗口标题正则） <input type="text" data-l="match" value="${esc(v.match || '')}"></label>` : ''}
         </div>
-        <p class="hint" data-launch-entry style="overflow-wrap:anywhere">${custom ? '当前启动' : '自动检测'}：${esc(entry || '尚未配置，请填写启动入口')}</p>
+        <p class="hint" data-launch-entry style="overflow-wrap:anywhere">${custom ? '当前启动' : '自动检测'}：${esc(entry || '尚未配置，请填写启动入口')}${launchFindMiss[c.id] ? '（自动找没找到；可手动填、点「选择程序…」，或装好工具后重启桌宠再找）' : ''}</p>
         ${workspace ? `<p class="hint">支持工作区的工具会打开这个目录；交接时优先使用交接文件所在目录。${v.kind === 'wsl-cli' ? 'WSL 也可填 Linux 路径。' : ''}</p>` : '<p class="hint">此启动方式不支持指定工作区。</p>'}
-        <div style="display:flex;gap:8px;margin-top:8px"><button data-test-launch="${c.id}">试一下</button>${custom ? `<button data-reset-launch="${c.id}">恢复默认</button>` : ''}</div>
+        <div style="display:flex;gap:8px;margin-top:8px"><button data-find="${c.id}">帮我找</button><button data-test-launch="${c.id}">试一下</button>${custom ? `<button data-reset-launch="${c.id}">恢复默认</button>` : ''}</div>
       </div>`;
     }).join('');
   }
@@ -280,10 +358,34 @@
       if (k === 'command' || k === 'target') card.querySelector('[data-launch-entry]').textContent = '当前启动：' + (e.target.value || '尚未配置，请填写启动入口');
     }
   });
+  // 方式不用硬选：填的内容明确是另一类（网址 / 路径 / 命令）就在失焦时纠正过去
+  $('#launch-list').addEventListener('change', (e) => {
+    const card = e.target.closest('[data-launch]'); const k = e.target.dataset.l;
+    if (!card || (k !== 'target' && k !== 'command')) return;
+    const id = card.dataset.launch; const u = cfg.launch[id]; if (!u) return;
+    const want = window.LaunchFind.judgeKind(u[k]);
+    if (want && want !== u.kind) {
+      const keep = { ...(u.cwd ? { cwd: u.cwd } : {}), ...(u.label ? { label: u.label } : {}) };
+      cfg.launch[id] = { ...(launchDefaults[id] || {}), kind: want, ...(want === 'cli' || want === 'wsl-cli' ? { command: u.command || u.target || '' } : { target: u.target || u.command || '' }), ...keep };
+      renderLaunch();
+    }
+  });
+  window.pet.invoke('wsl:distros').then((ds) => { $('#wsl-distro-list').innerHTML = (ds || []).map((d) => `<option value="${esc(d)}">`).join(''); }).catch(() => {});
   $('#launch-list').addEventListener('click', async (e) => {
     const t = e.target;
     if (t.dataset.testLaunch) { await persistSettings(); window.pet.send('launch', t.dataset.testLaunch); }
     if (t.dataset.resetLaunch) { delete cfg.launch[t.dataset.resetLaunch]; renderLaunch(); }
+    if (t.dataset.find) {
+      const id = t.dataset.find;
+      t.disabled = true; t.textContent = '找中…';
+      const found = await window.pet.invoke('launch:find', id).catch(() => null);
+      // 找到了且当前自定义是个空壳（没填入口）就撤掉覆盖，让自动检测接管；有自定义入口时不覆盖
+      const u = cfg.launch[id];
+      if (found && (!u || (!u.target && !u.command))) delete cfg.launch[id];
+      launchFindMiss[id] = !found;
+      launchDefaults = await window.pet.invoke('launch:defaults');
+      renderLaunch();
+    }
     if (t.dataset.pickExe) { const f = await window.pet.invoke('pick-file'); if (f) { const id = t.dataset.pickExe; cfg.launch[id] = cfg.launch[id] || { ...(launchDefaults[id] || {}) }; cfg.launch[id].target = f; cfg.launch[id].kind = 'app'; renderLaunch(); } }
     if (t.dataset.pickWorkspace) { const folder = await window.pet.invoke('pick-directory'); if (folder) { const id = t.dataset.pickWorkspace; cfg.launch[id] = cfg.launch[id] || { ...(launchDefaults[id] || {}) }; cfg.launch[id].cwd = folder; renderLaunch(); } }
   });
@@ -291,19 +393,23 @@
   // ---------- Notifications ----------
   function renderNotifications() {
     const list = (data && data.notifications) || [];
-    $('#n-list').innerHTML = list.length ? list.map((n) => `<div class="n-item ${n.read ? '' : 'unread'}"><span class="t">${new Date(n.ts).toLocaleString()}</span><div class="b"><b>${esc(n.title)}</b>${esc(n.body)}${n.link ? ` <a href="#" data-link="${esc(n.link)}">打开</a>` : ''}</div></div>`).join('') : '<p class="hint">还没有消息。额度重置、送额度、模型上新、公告都会出现在这里。</p>';
+    const pending = new Set(((data && data.giftClaims) || []).filter((c) => !c.claimed && !c.resolved).map((c) => c.key));
+    $('#n-list').innerHTML = list.length ? list.map((n) => `<div class="n-item ${n.read ? '' : 'unread'}"><span class="t">${new Date(n.ts).toLocaleString()}</span><div class="b"><b>${esc(n.title)}</b>${esc(n.body)}${n.link ? ` <a href="#" data-link="${esc(n.link)}">打开</a>` : ''}${n.claimKey && pending.has(n.claimKey) ? ` <a href="#" data-claim="${esc(n.claimKey)}">已领取</a>` : ''}</div></div>`).join('') : '<p class="hint">还没有消息。额度重置、送额度、模型上新、公告都会出现在这里。</p>';
     const unread = list.filter((n) => !n.read).length; $('#unread').textContent = unread; $('#unread').classList.toggle('hidden', !unread);
   }
-  $('#n-list').addEventListener('click', (e) => { const l = e.target.dataset.link; if (l) { e.preventDefault(); window.pet.send('open-external', l); } });
+  $('#n-list').addEventListener('click', (e) => { const l = e.target.dataset.link; if (l) { e.preventDefault(); window.pet.send('open-external', l); } const ck = e.target.dataset.claim; if (ck) { e.preventDefault(); window.pet.send('gift:claim', ck); } });
   $('#n-read').addEventListener('click', () => window.pet.send('notifications:read'));
   $('#n-clear').addEventListener('click', () => { if (confirm('清空全部消息？')) window.pet.send('notifications:clear'); });
 
   // ---------- Save ----------
+  document.querySelector('main').addEventListener('input', () => {
+    if(cfg && baseline && JSON.stringify(configDiff(baseline,cfg)) !== '{}') $('#save-msg').textContent = '有未保存的更改';
+  });
   $('#save').addEventListener('click', async () => {
-    $('#save-msg').textContent = '保存中…';
-    await persistSettings();
-    $('#save-msg').textContent = '✓ 已保存';
-    setTimeout(() => { $('#save-msg').textContent = ''; }, 3000);
+    $('#save').disabled = true; $('#save-msg').textContent = '保存中…';
+    try { await persistSettings(); $('#save-msg').textContent = '✓ 已保存'; }
+    catch(e) { $('#save-msg').textContent = '保存失败：' + e.message; }
+    finally { $('#save').disabled = false; }
   });
 
   // ---------- Init ----------
@@ -315,17 +421,18 @@
     baseline = clone(cfg);
     launchDefaults = await window.pet.invoke('launch:defaults');
     const st = await window.pet.invoke('state:get');
-    data = { ...(data || {}), notifications: st.notifications };
+    data = { ...(data || {}), snapshots: st.snapshots, ledgers: st.ledgers, notifications: st.notifications, newsStatus: st.newsStatus, giftClaims: st.giftClaims };
     applyTheme(data.colors ? data : { character: cfg.appearance.character === 'auto' ? cfg.appearance.favorite : cfg.appearance.character });
     $('#userdata').textContent = meta.userData;
     $('#about-meta').textContent = `版本 ${meta.version} · Electron ${meta.electron} · 窗口吸附 ${meta.snapAvailable ? '可用' : '不可用（koffi 未加载）'} · 程序目录 ${meta.root}`;
+    $('#feature-handoff').checked = cfg.features?.handoff !== false;
     renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderAgents(); renderLaunch(); renderNotifications();
     if (meta.quotaOnly) {
-      document.querySelector('.brand').firstChild.textContent = 'AI 桌宠 B';
-      document.querySelector('[data-tab="launch"]').hidden = true;
-      const q = document.querySelector('#quips-gen'); if (q) q.closest('.card').hidden = true;
+      // 仅额度模式（安装时未启用工具转接）：入口菜单已由主进程收起；「打开工具」标签隐藏，引导页改走额度首启
+
       window.PetOnboarding.mount({ cfg, meta, invoke: (name, p) => window.pet.invoke(name, p), save: async (provider, index) => { cfg.providers[index] = provider; cfg.quotaOnboardingDone = true; try { await persistSettings(); } catch (e) { cfg.quotaOnboardingDone = false; throw e; } }, done: () => { renderProviders(); window.pet.send('refresh'); } });
     }
-    goto((location.hash || '#providers').slice(1));
-  })();
+    goto((location.hash || '#tools').slice(1));
+    scanEnvironment();
+  })().catch(e => { $('#environment-status').textContent = '设置初始化失败：' + e.message; });
 })();

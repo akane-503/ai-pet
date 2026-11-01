@@ -28,30 +28,60 @@ function parseUsage(d) {
   return { windows, plan: d && d.membershipType || null, auto: num(plan.autoPercentUsed, null), api: num(plan.apiPercentUsed, null) };
 }
 
+// 共享周池使用 Dashboard RPC，旧网页接口仍可能返回月度 0%。
+function parseDashboardUsage(usage, info) {
+  const plan = info && info.planInfo || {};
+  const weekly = plan.includedUsagePeriod === 'INCLUDED_USAGE_PERIOD_WEEKLY' || plan.includedUsagePeriod === 2;
+  const u = usage && usage.planUsage || {};
+  let pct = num(u.totalPercentUsed, null);
+  if (pct === null && num(u.limit, 0) > 0) pct = num(u.includedSpend, 0) / num(u.limit, 0) * 100;
+  const windows = pct === null ? [] : [{ key: 'primary', label: weekly ? '共享周额度' : '本月', usedPercent: Math.max(0, Math.min(100, pct)), resetsAt: toEpochSec(plan.includedUsageResetsAt || usage.billingCycleEnd) }];
+  const od = usage && usage.spendLimitUsage || {};
+  if (num(od.individualLimit, 0) > 0) windows.push({ key: 'ondemand', label: '按量', usedPercent: Math.max(0, Math.min(100, num(od.individualUsed, 0) / od.individualLimit * 100)), resetsAt: toEpochSec(plan.billingCycleEnd || usage.billingCycleEnd) });
+  return { windows, plan: plan.planName || null, auto: num(u.autoPercentUsed, null), api: num(u.apiPercentUsed, null), shared: !!(info && info.isMerged), weekly };
+}
+
 async function fetchSnapshot(p) {
   const { request } = require('../http');
   const s = base(p); s.kind = 'window';
+  let token = '';
   let cookie = p.cookie ? (p.cookie.includes('=') ? p.cookie : 'WorkosCursorSessionToken=' + p.cookie) : '';
   if (!cookie) {
-    let token = '';
     if (!require('fs').existsSync(p.dbPath || DB)) { s.error = '没找到 Cursor 本机登录数据（未安装或路径不对）'; return s; }
     try { token = readToken(p.dbPath || DB); } catch (e) { s.error = '读不到 Cursor 登录信息：' + e.message; return s; }
     if (!token) { s.error = 'Cursor 未登录'; return s; }
     try { cookie = cookieFor(token); } catch (_) { s.error = 'Cursor 登录 token 格式不认识'; return s; }
   }
-  const r = await request('https://cursor.com/api/usage-summary', { headers: { Cookie: cookie, Accept: 'application/json' }, timeoutMs: 20000 });
-  if (!r.ok || !r.data) { s.error = `用量接口 HTTP ${r.status}`; return s; }
-  const u = parseUsage(r.data);
+  let u = null;
+  if (token) {
+    try {
+      const rpc = (method) => request('https://api2.cursor.sh/aiserver.v1.DashboardService/' + method, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Connect-Protocol-Version': '1' }, body: JSON.stringify(method === 'GetCurrentPeriodUsage' ? { includePooledUsage: true } : {}), timeoutMs: 20000 });
+      const [usage, info] = await Promise.all([rpc('GetCurrentPeriodUsage'), rpc('GetPlanInfo')]);
+      if (usage.ok && usage.data && info.ok && info.data && info.data.planInfo) u = parseDashboardUsage(usage.data, info.data);
+      if (u && !u.windows.length && u.shared) {
+        s.plan = u.plan; s.extra.shared = true;
+        s.error = '已识别 ' + (u.plan || '共享订阅') + '，但接口暂未返回周用量；请稍后刷新或查看官方用量页';
+        return s;
+      }
+    } catch (_) { /* 老账户仍可尝试网页接口；新账户在下方拒绝旧月度值 */ }
+  }
+  if (!u || !u.windows.length) {
+    const r = await request('https://cursor.com/api/usage-summary', { headers: { Cookie: cookie, Accept: 'application/json' }, timeoutMs: 20000 });
+    if (!r.ok || !r.data) { s.error = `用量接口 HTTP ${r.status}`; return s; }
+    if (/^(plus|premium|super)$/i.test(r.data.membershipType || '')) { s.error = '共享周额度接口暂不可用，未采用旧月度数据；请稍后刷新或检查 Cursor 登录状态'; return s; }
+    u = parseUsage(r.data);
+  }
   if (!u.windows.length) { s.error = '接口无用量字段'; return s; }
   Object.assign(s, { ok: true, windows: u.windows, plan: u.plan });
+  s.extra.shared = !!u.shared;
   // Cursor 是多模型 IDE：把当前 composer 的模型也写进快照，气泡里能看出「这个额度在用哪个模型」
   const cur = cursorModel.info(p.dbPath || DB);
   if (cur && cur.ok) { s.extra.model = cur.model || null; s.extra.modelLabel = cur.label || null; s.extra.modelCharacter = cur.character || null; s.extra.modelAuto = !!cur.auto; }
   s.fraction = 1 - u.windows[0].usedPercent / 100;
   const now = Date.now() / 1000;
   const modelTag = cur && cur.ok && cur.label ? ` · ${cur.label}` : '';
-  s.lines = [`Cursor ${u.plan || ''}${modelTag}`.replace(/\s+/g, ' ').trim(), ...u.windows.map((w) => `${w.label}已用 ${Math.round(w.usedPercent)}%` + (w.resetsAt ? ` · ${fmtCountdown(w.resetsAt - now)}后重置` : ''))];
+  s.lines = [`${u.shared ? 'Cursor / Grok Bot' : 'Cursor'} ${u.plan || ''}${modelTag}`.replace(/\s+/g, ' ').trim(), ...u.windows.map((w) => `${w.label}已用 ${Math.round(w.usedPercent)}%` + (w.resetsAt ? ` · ${fmtCountdown(w.resetsAt - now)}后重置` : ''))];
   if (u.auto !== null || u.api !== null) s.lines.push(`Auto ${Math.round(u.auto || 0)}% · API ${Math.round(u.api || 0)}%`);
   return s;
 }
-module.exports = { fetchSnapshot, parseUsage, cookieFor };
+module.exports = { fetchSnapshot, parseUsage, parseDashboardUsage, cookieFor };

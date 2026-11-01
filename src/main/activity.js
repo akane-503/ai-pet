@@ -83,6 +83,9 @@ function wslClaudeDirs() {
 }
 
 function detect(cfg, providers, agents = []) {
+  const defaults = require('./config').defaultConfig().activity;
+  cfg = { ...cfg };
+  for (const key of ['codexDir','geminiDir','qwenDir','zcodeDir','kimiDir']) if (!cfg[key]) cfg[key] = defaults[key];
   const now = Date.now();
   const windowMs = (Number(cfg.windowMin) || 15) * 60000;
   const det = {};
@@ -123,6 +126,7 @@ const BROWSER_RE = /(Google Chrome|Microsoft​? Edge|Mozilla Firefox|Chromium|O
 // Claude Code 终端标题：空闲 "✳ Claude Code"，干活时 "◑ <任务摘要>"（开头是转圈符号）
 const SPINNER_RE = /^[✳✶✷✸✹✺✻✼✽◐◑◒◓●○◉◌◍⏺⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]\s/;
 const NATIVE_RULES = [
+  [/^Grok Bot(\s*[-–—|]|$)/i, 'grok'],
   [/DeepSeek Harness|^DSH Desktop/i, 'deepseek'],
   [/^ZCode(\s*[-–—|]|$)/i, 'zcode'],
   [/Claude Code/i, 'claude'],
@@ -157,6 +161,7 @@ function characterForWindow(win, agents = []) {
   const custom = agentForWindow(win, agents); if (custom) return custom;
   const exe = String(win.processName || '').toLowerCase();
   const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini', 'kimi.exe': 'kimi' };
+  if (exe === 'grok bot.exe') return 'grok';
   if (native[exe]) return native[exe];
   if (/^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/.test(exe) || BROWSER_RE.test(win.title || '')) {
     for (const [re, id] of WEB_RULES) if (re.test(String(win.title || '').trim())) return id;

@@ -19,7 +19,7 @@ const TYPE_META = {
   gemini: { label: 'Gemini CLI（OAuth / 中转站）', fields: ['baseUrl', 'apiKey', 'accessToken', 'userId', 'credentialsPath', 'project', 'auth', 'warnPercent'], kind: 'window', defaultCharacter: 'gemini' },
   zhipu: { label: '智谱 GLM / Z.ai Coding Plan', fields: ['baseUrl', 'apiKey', 'warnPercent'], kind: 'window', defaultCharacter: 'zcode' },
   'claude-oauth': { label: 'Claude 订阅 (Claude Code 登录)', fields: ['credentialsPath', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
-  cursor: { label: 'Cursor 订阅（读本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'claude' },
+  cursor: { label: 'Cursor / Grok Bot 订阅（读 Cursor 本机登录）', fields: ['dbPath', 'cookie', 'warnPercent'], kind: 'window', defaultCharacter: 'grok' },
   kimi: { label: 'Kimi 桌面版（Kimi Work）', fields: ['agentDir', 'warnPercent'], kind: 'window', defaultCharacter: 'kimi' },
   custom: { label: '自定义 JSON 接口', fields: ['baseUrl', 'apiKey', 'balancePath', 'usedPath', 'limitPath', 'currency', 'warnPercent'], kind: 'window', defaultCharacter: 'deepseek' },
 };

@@ -3,18 +3,20 @@
 const { request } = require('../http');
 const { base, num, pick, toEpochSec, fmtCountdown } = require('./util');
 
-function normBase(u) { return String(u || 'https://open.bigmodel.cn').trim().replace(/\/+$/, '').replace(/\/api\/paas\/v4$/, ''); }
+function normBase(u) { return String(u || 'https://api.z.ai').trim().replace(/\/+$/, '').replace(/\/api\/paas\/v4$/, ''); }
 
-// Z.ai 返回 { type: CREDIT_LIMIT|TOKENS_LIMIT|TIME_LIMIT, unit, number }：unit 3=小时 6=天 7=周 8=月，number=数量
-const UNIT_NAME = { 1: '秒', 2: '分', 3: '小时', 4: '小时', 5: '天', 6: '天', 7: '周', 8: '月' };
+// 与 ZCode 客户端一致：3=小时、5=月、6=周；不能从重置时间猜测免费体验。
+const UNIT_NAME = { 3: '小时', 5: '月', 6: '周' };
 function windowLabel(l) {
   const t = String(l.type || '').toUpperCase();
   const what = t.includes('TOKEN') ? 'Token' : t.includes('TIME') || t.includes('MCP') ? 'MCP' : t.includes('CREDIT') ? '积分' : '额度';
   const n = Number(l.number) || 0, u = UNIT_NAME[l.unit] || '';
-  const span = n && u ? (n === 1 && (l.unit === 6 || l.unit === 5) ? '每日' : n === 1 && l.unit === 7 ? '每周' : n === 1 && l.unit === 8 ? '每月' : `${n}${u}`) : '';
+  const span = n && u ? (n === 1 && Number(l.unit) === 6 ? '每周' : n === 1 && Number(l.unit) === 5 ? '每月' : `${n}${u}`) : '';
   return (span ? span + ' ' : '') + what;
 }
-function windowMinutes(l) { const n = Number(l.number) || 0; const m = { 1: 1 / 60, 2: 1, 3: 60, 4: 60, 5: 1440, 6: 1440, 7: 10080, 8: 43200 }[l.unit]; return n && m ? Math.round(n * m) : null; }
+function windowMinutes(l) { const n = Number(l.number) || 0; const m = { 3: 60, 5: 43200, 6: 10080 }[l.unit]; return n && m ? Math.round(n * m) : null; }
+
+function zhipuLabel(l) { return windowLabel(l); }
 
 async function fetchSnapshot(p, ctx) {
   const s = base(p);
@@ -39,7 +41,7 @@ async function fetchSnapshot(p, ctx) {
     if (pct === null && usage && curV !== null) pct = (curV / usage) * 100;
     if (pct === null) continue;
     const resetsAt = toEpochSec(pick(l, ['nextResetTime', 'resetTime', 'nextReset']));
-    s.windows.push({ key: 'w' + s.windows.length, label: windowLabel(l), usedPercent: pct, resetsAt, windowMinutes: windowMinutes(l), total: usage, used: curV, remaining: num(l.remaining, null), unit: l.unit });
+    s.windows.push({ key: 'w' + s.windows.length, label: zhipuLabel(l, now), usedPercent: pct, resetsAt, windowMinutes: windowMinutes(l), total: usage, used: curV, remaining: num(l.remaining, null), unit: l.unit });
   }
   // 最短窗口作为 primary（决定胖瘦/标签），其余 secondary
   if (s.windows.length) { const byLen = [...s.windows].sort((a, b) => (a.windowMinutes || 1e9) - (b.windowMinutes || 1e9)); byLen[0].key = 'primary'; for (const w of byLen.slice(1)) w.key = `secondary:${w.windowMinutes}:${w.label}`; }
@@ -64,4 +66,4 @@ async function fetchSnapshot(p, ctx) {
   return s;
 }
 
-module.exports = { fetchSnapshot };
+module.exports = { fetchSnapshot, zhipuLabel };

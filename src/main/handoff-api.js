@@ -884,7 +884,8 @@ async function run({ kind, dirs, winTitle, api, request, session, onRead, onWrit
   if (onPhase) onPhase('整理交接');
   const body = await summarize({ digest, gitInfo, api, request });
   if (onTiming) onTiming({ model: api.model || 'deepseek-flash', work: estimate.work, seconds: Math.max(0.001, (Date.now() - started) / 1000) });
-  const dir = root || path.dirname(LATEST);
+  // 交接文件默认落 ~/.handoff/cache：仓库根目录不再堆 HANDOFF；文件里已带 ai-pet-project 标记，工作区照常识别
+  const dir = path.join(path.dirname(LATEST), 'cache');
   // 同目录换了会话就另存，避免两个项目互相顶掉对方的交接文件
   const file = root ? pickFile({ dir, transcript, label, root }) : path.join(dir, `HANDOFF-${Date.now()}.md`);
   let backup = null, prevLines = 0;
@@ -907,4 +908,30 @@ async function run({ kind, dirs, winTitle, api, request, session, onRead, onWrit
   return file;
 }
 
-module.exports = { KINDS, sessionName, newestTranscript, readTranscript, watchSent, threadLabel, freshText, pickFile, recentSessions, zcodeProject, digestFor, pruneOldHandoffs, commonDir, dominantDir, parseTranscript, pathsIn, projectRoot, buildDigest, compose, summarize, run };
+// 直接交接用的指针：解析最近（或指定）会话，返回 { ref, project }——不整理不写文件，接手方自己读记录
+function sessionWorkspace(r) {
+  const distro = (/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)/i.exec(r.ref) || [])[1] || 'Ubuntu';
+  const items = (r.workspaceHints || []).map(hint => ({role:'tool',full:JSON.stringify(hint)}));
+  const explicit=[...new Set((r.workspaceHints||[]).map(h=>h.workdir).filter(Boolean))];
+  if(explicit.length===1) {
+    let dir=require('./session-reader').normalizeWorkspace(explicit[0]);
+    const m=/^\/mnt\/([a-z])\/(.*)$/i.exec(dir);
+    if(m)dir=m[1].toUpperCase()+':\\'+m[2].replace(/\//g,'\\');
+    else if(dir.startsWith('/home/'))dir='\\\\wsl.localhost\\'+distro+dir.replace(/\//g,'\\');
+    try {if(path.isAbsolute(dir)&&fs.statSync(dir).isDirectory()&&!internalPath(dir)&&path.resolve(dir)!==path.parse(dir).root&&path.resolve(dir)!==path.resolve(os.homedir()))return projectRoot(items,distro,dir)||dir;}catch(_){}
+  }
+  return projectRoot(items, distro, r.cwd || r.project) || '';
+}
+function sessionPointer(kind, dirs, winTitle, session) {
+  const ref = session || newestTranscript(kind, dirs, winTitle);
+  if (!ref) return null;
+  {
+    try {
+      const r = require('./session-reader').readSession(ref);
+      const project = sessionWorkspace(r);
+      return { ref:r.ref, project, title:r.title, truncated:r.truncated };
+    } catch (_) { return null; }
+  }
+}
+
+module.exports = { KINDS, sessionName, newestTranscript, readTranscript, watchSent, threadLabel, freshText, pickFile, recentSessions, zcodeProject, digestFor, pruneOldHandoffs, commonDir, dominantDir, parseTranscript, pathsIn, projectRoot, buildDigest, compose, summarize, run, sessionPointer, sessionWorkspace, referenceKey:require('./session-reader').referenceKey };

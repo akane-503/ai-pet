@@ -195,7 +195,10 @@
     for (const p of ordered) {
       const s = data.snapshots[p.id]; if (!s) continue;
       const led = data.ledgers[p.id];
-      if (!s.ok && !s.stale) { out.push({ pid: p.id, lines: [{ t: shortName(p), s: 'A' }, { t: '获取失败', s: 'S', c: '#e0433f' }, { t: (s.error || '').slice(0, 24), s: 'C' }] }); continue; }
+      if (!s.ok && !s.stale) {
+        if (s.unconfigured) { out.push({ pid: p.id, lines: [{ t: shortName(p), s: 'A' }, { t: '未配置', s: 'S' }, { t: '设置里配好或关掉', s: 'C' }] }); continue; }
+        out.push({ pid: p.id, lines: [{ t: shortName(p), s: 'A' }, { t: '获取失败', s: 'S', c: '#e0433f' }, { t: (s.error || '').slice(0, 24), s: 'C' }] }); continue;
+      }
       if (window.PetUsage.isRelay(p, s)) {
         const metric = window.PetUsage.relayMetric(s, led), t = fmtMoney(metric.value, metric.currency);
         out.push({ pid: p.id, lines: [{ t: shortName(p) + ' ' + metric.label, s: 'A', w: true }, { t, s: amountStyle(t), roll: Number.isFinite(metric.value) ? metric.value : undefined, cur: metric.currency }, { t: s.stale ? '刷新失败，沿用最近值' : metric.hint, s: 'C', w: true }] });
@@ -205,7 +208,10 @@
       } else if (s.windows && s.windows.length) {
         for (const w of s.windows) {
           const left = w.resetsAt ? fmtLeft(w.resetsAt - Date.now() / 1000) : '';
-          out.push({ pid: p.id, lines: [{ t: `${shortName(p)} ${w.label}`, s: 'A' }, { t: `已用 ${Math.round(w.usedPercent)}%`, s: 'P', c: w.usedPercent >= (Number(p.warnPercent) || 90) ? '#e0433f' : '' }, { t: left ? `${left}后重置` : (s.plan ? String(s.plan).toUpperCase() : ''), s: 'C' }] });
+          const warn = w.usedPercent >= (Number(p.warnPercent) || 90);
+          const rem = Number.isFinite(w.remaining) ? `剩 ${w.remaining.toLocaleString()}` : '';
+          const sub = [rem ? `已用 ${Math.round(w.usedPercent)}%` : '', left ? `${left}后重置` : ''].filter(Boolean).join(' · ') || (s.plan ? String(s.plan).toUpperCase() : '');
+          out.push({ pid: p.id, lines: [{ t: `${shortName(p)} ${w.label}`, s: 'A' }, { t: rem || `已用 ${Math.round(w.usedPercent)}%`, s: 'P', c: warn ? '#e0433f' : '' }, { t: sub, s: 'C', w: sub.length > 16 }] });
         }
       }
       if (Number.isFinite(s.granted) && s.granted > 0) out.push({ pid: p.id, lines: [{ t: shortName(p) + ' 赠送余额', s: 'A' }, { t: fmtMoney(s.granted, s.currency), s: 'P' }, { t: Number.isFinite(s.toppedUp) ? '充值余额 ' + fmtMoney(s.toppedUp, s.currency) : '', s: 'C' }] });
@@ -273,7 +279,11 @@
   }
   function bubbleClick() {
     if (handoffView) return;
-    if (bubbleMode === 'notice') { if (noticeLink) window.pet.send('open-external', noticeLink); if (noticeId) window.pet.send('notification:read', noticeId); hideBubble(); return; }
+    if (bubbleMode === 'notice') {
+      // 送额度提醒：点一下就算已领取，停止重复提醒
+      if (activeNotice && activeNotice.claimKey) { window.pet.send('gift:claim', activeNotice.claimKey); hideBubble(); return; }
+      if (noticeLink) window.pet.send('open-external', noticeLink); if (noticeId) window.pet.send('notification:read', noticeId); hideBubble(); return;
+    }
     if (bubbleMode === 'info' && pageIdx < pages.length - 1) { pageIdx++; renderPage(true); armBubbleTimer(); return; }
     if (bubbleMode === 'info' && data.config.appearance.quipsOn) { bubbleMode = 'random'; setLines(randomLines(), { fade: true }); armBubbleTimer(); return; }
     pages = buildPages(); pageIdx = 0; bubbleMode = 'info'; renderPage(true); armBubbleTimer();
@@ -284,7 +294,7 @@
     bubble.classList.remove('compact'); bubble.classList.add('notice');
     const body = String(n.body || '');
     const title = String(n.title || '').replace(/^[🎁💰⏰⚠️⛔🆕📣📰]+\s*/u, '');
-    const lines = [{ t: title, s: 'A', w: true }, { t: body, s: 'S', w: true }, { t: n.link ? '点击查看 · 右键收起' : '点击收起 · 消息中心可回看', s: 'C', w: true }];
+    const lines = [{ t: title, s: 'A', w: true }, { t: body, s: 'S', w: true }, { t: n.claimKey ? (n.kind === 'stuck' ? '点一下气泡 = 知道了，停止提醒' : '点一下气泡 = 已领取，停止提醒') : n.link ? '点击查看 · 右键收起' : '点击收起 · 消息中心可回看', s: 'C', w: true }];
     setLines(lines, { fade: bubble.classList.contains('open') }); textBox.scrollTop = 0; noticeLink = n.link || null; noticeId = n.id || null; bubbleMode = 'notice';
     bubble.classList.add('open');
     root.classList.add('hop'); setTimeout(() => root.classList.remove('hop'), 520);
@@ -375,7 +385,13 @@
     const held = Date.now() - pressAt; setTimeout(() => playSound('release'), held < 350 ? Math.max(0, 250 - held) : 0);
     window.pet.send('context-menu', menuAnchor());
   });
-  document.addEventListener('dblclick', (e) => { if (hitTest(e) && !e.target.closest('#bubble')) { clearTimeout(refreshClickTimer); refreshClickTimer = null; window.pet.send('launch'); } });
+  document.addEventListener('dblclick', (e) => { if (hitTest(e) && !e.target.closest('#bubble')) {
+    clearTimeout(refreshClickTimer); refreshClickTimer = null; hideBubble();
+    pressing = false; dragging = false; ignoring = false;
+    root.classList.remove('hover'); body.classList.remove('pressed');
+    window.pet.send('mouse:ignore', true);
+    window.pet.send('launch');
+  } });
   document.addEventListener('contextmenu', (e) => { e.preventDefault(); if (handoffView && e.target.closest('#bubble')) { window.pet.send('context-menu', menuAnchor()); return; } if (e.target.closest('#bubble') && bubble.classList.contains('open')) hideBubble(); });
   menuBtn.addEventListener('click', (e) => { e.stopPropagation(); window.pet.send('panel:toggle'); });
 

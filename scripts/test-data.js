@@ -256,6 +256,21 @@ test('ZCode returns failure for empty quota data, while real zero percent is val
   assert.equal(r.ok, true); assert.equal(r.windows[0].usedPercent, 0);
 });
 
+test('ZCode weekly credits match the client instead of appearing as a free trial', async () => {
+  const limits = [
+    { type: 'CREDIT_LIMIT', unit: 3, number: 5, usage: 2000, currentValue: 3, remaining: 1996, percentage: 1, nextResetTime: Date.now() + 5 * 3600e3 },
+    { type: 'CREDIT_LIMIT', unit: 6, number: 1, usage: 10000, currentValue: 3819, remaining: 6180, percentage: 38, nextResetTime: Date.now() + 5 * 86400e3 },
+    { type: 'TIME_LIMIT', unit: 5, number: 1, percentage: 0 },
+  ];
+  const impl = mockedModule('src/main/providers/zhipu.js', { '../http': httpMock(async () => response({ code: 200, data: { limits } })) });
+  const r = await impl.fetchSnapshot({ apiKey: 'fixture' });
+  assert.deepEqual(r.windows.map(w => [w.label, w.windowMinutes]), [['5小时 积分', 300], ['每周 积分', 10080], ['每月 MCP', 43200]]);
+  assert.equal(r.windows[0].key, 'primary');
+  assert.equal(r.windows[1].remaining, 6180);
+  assert.equal(r.fraction, 0.62);
+  assert.doesNotMatch(r.lines.join(' '), /免费体验/);
+});
+
 test('Gemini CLI on a relay reports relay usage instead of a fabricated balance', async () => {
   const normBase = require('../src/main/providers/newapi').normBase;
   const impl = mockedModule('src/main/providers/gemini.js', { './newapi': { normBase, fetchSnapshot: async () => ({ ok: true, currency: 'USD', balance: null, usedTotal: 0.0801, extra: { unlimited: true, used: 0.0801 } }) } });
@@ -304,6 +319,24 @@ test('Gemini without any credentials explains where to point the CLI', async () 
   assert.equal(r.relay, false); assert.equal(r.source, 'oauth');
 });
 
+test('Gemini with nothing configured admits that instead of claiming an API key', async () => {
+  const impl = mockedModule('src/main/providers/gemini.js', { '../http': httpMock(async () => response({})), './util': { ...require('../src/main/providers/util'), readJson: () => null } });
+  const r = await impl.fetchSnapshot({ geminiDir: path.join(os.tmpdir(), 'aipet-test-missing-gemini') });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /没找到 Gemini 配置/);
+  assert.doesNotMatch(r.error, /API Key 直连/);
+  assert.equal(r.unconfigured, true, '启用但什么都没配是未配置，不是失败');
+});
+
+test('Gemini API-key direct states its own limitation, not a false setup claim', async () => {
+  const impl = mockedModule('src/main/providers/gemini.js', { '../http': httpMock(async () => response({})), './util': { ...require('../src/main/providers/util'), readJson: () => null } });
+  const r = await impl.fetchSnapshot({ apiKey: 'fixture', geminiDir: path.join(os.tmpdir(), 'aipet-test-missing-gemini') });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /API Key 直连/);
+  assert.match(r.error, /查不到剩余额度/);
+  assert.notEqual(r.unconfigured, true, '填了 Key 但查不到额度是真实限制，不该标成未配置');
+});
+
 test('Gemini refresh does not keep relay amounts after switching to official auth', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
   const old = { ok: true, relay: true, source: 'relay', balance: 2, at: 1 };
@@ -340,6 +373,21 @@ test('config persistence recovers last valid backup without losing corrupt origi
   assert.equal(deepMerge({ appearance: { scale: 1.5, character: 'zcode' } }, { appearance: { scale: 1.2 } }).appearance.character, 'zcode');
 });
 
+test('new built-in providers reach old configs once; deleted defaults never resurrect', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-providers-'));
+  t.after(() => { assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aipet-providers-'))); fs.rmSync(dir, { recursive: true, force: true }); });
+  const file = path.join(dir, 'config.json');
+  const defaults = () => ({ providers: [{ id: 'cursor', type: 'cursor', enabled: false }, { id: 'deepseek', type: 'deepseek', enabled: false }], providersSeen: [] });
+  fs.writeFileSync(file, JSON.stringify({ providers: [{ id: 'deepseek', enabled: true }] }));
+  const store = new JsonStore(file, defaults); store.load();
+  assert.deepEqual(store.data.providers.map((p) => [p.id, p.enabled]), [['deepseek', true], ['cursor', false]]);
+  assert.deepEqual(store.data.providersSeen, ['cursor', 'deepseek']);
+  store.data.providers = store.data.providers.filter((p) => p.id !== 'deepseek');
+  assert.equal(store.save(), true);
+  const reloaded = new JsonStore(file, defaults).load();
+  assert.deepEqual(reloaded.providers.map((p) => p.id), ['cursor'], '用户删除过的内置服务商不再复活');
+});
+
 test('failed quip roles retry after backoff; successful roles wait their normal interval', () => {
   const now = 2000000000000, state = { updatedAt: now - 60000, characterAt: { codex: now - 60000 }, failed: ['claude'], retryAfter: now + 60000 };
   assert.deepEqual(dueCharacters({ intervalHours: 24 }, state, ['codex', 'claude'], now), []);
@@ -350,6 +398,98 @@ test('new background work takes over once the short launch grace expires', () =>
   const now = Date.now();
   const r = activity.selectCharacter({ appearance: { character: 'auto' }, now, recent: { character: 'zcode', reason: 'launch', at: now - 20000 }, activity: { details: { claude: now - 500 } } });
   assert.equal(r.character, 'claude');
+});
+
+test('launch menu labels stay tool-style: old character-name labels fall back to entry names', async () => {
+  const impl = mockedModule('src/main/launcher.js', {
+    electron: { shell: {} }, './winsnap': {}, './handoff': { toWslPath: (p) => p },
+    fs: { existsSync: (p) => /Grok Bot\.exe$/i.test(String(p)) },
+    child_process: { spawn: () => { throw Error('must not spawn'); } },
+  });
+  const grok = impl.resolve('grok', { grok: { kind: 'app', label: 'Grok 娘 · xAI', target: 'E:\\06_Software\\GrokBot\\Grok Bot\\Grok Bot.exe' } });
+  assert.equal(grok.label, 'Grok Bot');
+  const kimi = impl.resolve('kimi', { kimi: { kind: 'app', label: 'Kimi 娘 · 月之暗面', target: 'E:\\06_Software\\Kimi\\Kimi.exe' } });
+  assert.equal(kimi.label, 'Kimi');
+  const gemini = impl.resolve('gemini', { gemini: { kind: 'url', label: '哈基米 · Gemini', target: 'https://gemini.google.com' } });
+  assert.equal(gemini.label, 'Gemini 网页');
+  const custom = impl.resolve('grok', { grok: { kind: 'app', label: '我的 Grok', target: 'E:\\x\\Grok Bot.exe' } });
+  assert.equal(custom.label, '我的 Grok');
+});
+
+test('WorkBuddy session model maps to the vendor character; tier names stay honest and fall back', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-wb-'));
+  t.after(() => { assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aipet-wb-'))); fs.rmSync(dir, { recursive: true, force: true }); });
+  const { DatabaseSync } = require('node:sqlite');
+  const mk = (name, rows) => {
+    const dbPath = path.join(dir, name);
+    const db = new DatabaseSync(dbPath);
+    db.exec('create table sessions (id text primary key, model text, deleted_at integer, updated_at integer)');
+    const ins = db.prepare('insert into sessions (id, model, deleted_at, updated_at) values (?, ?, ?, ?)');
+    for (const r of rows) ins.run(...r);
+    db.close();
+    return dbPath;
+  };
+  const am = require('../src/main/agent-model');
+  const mixed = mk('wb1.db', [['s1', 'fast-model', null, 1000], ['s2', 'deepseek-v3.2', null, 2000], ['s3', 'kimi-k2', 3000, 3000]]);
+  const r = am.readWorkbuddy(mixed);
+  assert.equal(r.ok, true); assert.equal(r.model, 'deepseek-v3.2'); assert.equal(r.character, 'deepseek'); assert.equal(r.auto, false);
+  const tier = am.readWorkbuddy(mk('wb2.db', [['s1', 'fast-model', null, 1000]]));
+  assert.equal(tier.ok, true); assert.equal(tier.character, null); assert.equal(tier.auto, true); assert.equal(tier.label, 'fast-model');
+  assert.equal(am.readWorkbuddy(path.join(dir, 'nope.db')).ok, false);
+  assert.equal(am.info('yuanbao'), null, '没有读取器的 agent 返回 null');
+});
+
+test('CLI defaults recognize commands anywhere on PATH, not only npm global dirs', () => {
+  const customDir = path.join(os.tmpdir(), 'aipet-cli-path-x');
+  let onPath = false;
+  const impl = mockedModule('src/main/launcher.js', {
+    electron: { shell: {} }, './winsnap': {},
+    fs: { existsSync: (p) => onPath && String(p).toLowerCase().startsWith(customDir.toLowerCase()) },
+    child_process: { spawn: () => { throw Error('must not spawn'); } },
+  });
+  const prev = process.env.PATH;
+  process.env.PATH = customDir + path.delimiter + prev;
+  try {
+    assert.equal(impl.menuAvailable({ kind: 'cli', command: 'claude' }), false, 'PATH 里没有时不显示');
+    onPath = true;
+    assert.equal(!!impl.claudeWinSpec(), true, '装在自定义 PATH 目录的 claude 应被认出');
+    assert.equal(impl.menuAvailable({ kind: 'cli', command: 'claude' }), true);
+  } finally { process.env.PATH = prev; }
+});
+
+test('launch kind is judged from the filled value, never forcing a manual pick', () => {
+  const { judgeKind, parseWslList } = require('../src/shared/launch');
+  assert.equal(judgeKind('https://gemini.google.com'), 'url');
+  assert.equal(judgeKind('E:\\06_Software\\Trae CN\\Trae CN.exe'), 'app');
+  assert.equal(judgeKind('C:/Program Files/Tool/tool'), 'app');
+  assert.equal(judgeKind('OpenAI.Codex_2p2nqsd0c76g0!App'), 'store');
+  assert.equal(judgeKind('claude'), 'cli');
+  assert.equal(judgeKind('claude -c --resume'), 'cli');
+  assert.equal(judgeKind('wt.exe'), 'cli', '裸 exe 名按 PATH 解析，归 CLI 而不是要求完整路径');
+  assert.equal(judgeKind(''), null);
+  assert.equal(judgeKind('   '), null);
+  assert.deepEqual(parseWslList('u\x00b\x00u\x00n\x00t\x00u\x00-\x002\x004\x00.\x000\x004\x00\r\n\x00D\x00e\x00b\x00i\x00a\x00n\x00\r\n'), ['ubuntu-24.04', 'Debian']);
+  assert.deepEqual(parseWslList(''), []);
+});
+
+test('direct handoff: pointer resolves the newest transcript; takeover prompt carries --from', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-pointer-'));
+  t.after(() => { assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aipet-pointer-'))); fs.rmSync(dir, { recursive: true, force: true }); });
+  const proj = path.join(dir, 'projects', 'p1');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1.jsonl'), JSON.stringify({ type: 'user', cwd: dir, message: { role: 'user', content: '当前任务：修好它' } }) + '\n');
+  const h = require('../src/main/handoff-api');
+  const p = h.sessionPointer('claude', [dir], '');
+  assert.ok(p && p.ref.endsWith('s1.jsonl'), '指针指向最近的会话记录');
+  assert.equal(typeof p.project, 'string');
+  assert.equal(h.sessionPointer('claude', [path.join(dir, 'nope')], ''), null);
+  const { takeoverPrompt } = require('../src/main/handoff');
+  const home = path.join(dir, 'home');
+  for (const tool of ['.claude', '.zcode']) { fs.mkdirSync(path.join(home, tool, 'skills', 'takeover'), { recursive: true }); fs.writeFileSync(path.join(home, tool, 'skills', 'takeover', 'SKILL.md'), '# takeover'); }
+  assert.equal(takeoverPrompt(null, { tool: 'claude', home, from: 'C:\\x\\s1.jsonl' }), '/takeover --from "C:/x/s1.jsonl"');
+  assert.equal(takeoverPrompt(null, { tool: 'zcode', home, from: 'C:\\x\\s1.jsonl' }), '$takeover --from "C:/x/s1.jsonl"');
+  assert.ok(takeoverPrompt(null, { tool: "cursor", home, from: "cursor:C:/db#id1" }).includes('"cursor:C:/db#id1"'));
+  assert.match(takeoverPrompt(null, { tool: 'claude', home: path.join(dir, 'nohome'), from: 'C:\\x\\s1.jsonl' }), /接手来源会话/);
 });
 
 test('switching launch kind does not inherit a different entry and empty CLI commands never launch', async () => {
@@ -381,7 +521,7 @@ test('Gemini desktop uses a stable installed entry, focuses its process and fall
   const impl = mockedModule('src/main/launcher.js', {
     fs: { existsSync: p => (cli && /[\\/]npm[\\/]gemini\.cmd$/.test(p)) || (installed && /[\\/]Google[\\/]Gemini[\\/]Gemini\.exe$/.test(p)) },
     electron: { shell: { openExternal: async () => { opened++; } } },
-    './winsnap': { findWindow: (_, exe) => running && exe === 'Gemini.exe' ? { hwnd: 'fixture' } : null, bringToFront: () => { focused++; } },
+    './winsnap': { findWindow: (_, exe) => running && exe === 'Gemini.exe' ? { hwnd: 'fixture' } : null, activateWindow: async () => { focused++; return true; } },
     child_process: { execFileSync: () => '', spawn: () => { spawns++; const child = new EventEmitter(); child.unref = () => {}; process.nextTick(() => child.emit('spawn')); return child; } },
   });
   const spec = impl.resolve('gemini', {});
@@ -490,7 +630,7 @@ test('workspace tools reopen an existing app with the correct directory argument
   const calls=[]; let focused=0;
   const impl=mockedModule('src/main/launcher.js',{
     fs:{existsSync:()=>true,statSync:p=>({isDirectory:()=>p!=='D:\\missing'})},
-    electron:{shell:{}},'./winsnap':{findWindow:()=>({hwnd:'existing'}),bringToFront:()=>{focused++;}},
+    electron:{shell:{}},'./winsnap':{findWindow:()=>({hwnd:'existing'}),activateWindow:async()=>{focused++;return true;}},
     child_process:{spawn:(cmd,args,opts)=>{calls.push({cmd,args,opts});const child=new EventEmitter();child.unref=()=>{};process.nextTick(()=>child.emit('spawn'));return child;}},
   });
   const cwd='D:\\项目 with spaces & punctuation\\交接';
@@ -789,6 +929,12 @@ test('API handoff failure is shown in the bubble instead of silently falling bac
   assert.match(fb.detail, /会耗来源额度/);
   vm.runInContext('handoffAction({action:"cancel",id:handoffJob&&handoffJob.id})', ctx);
   await running;
+  sent.length = 0;
+  let sourceSends = 0;
+  ctx.pasteTo = async () => { sourceSends++; return true; };
+  await vm.runInContext("runHandoff('fixture', {kind:'app',label:'Fixture'}, {character:'claude',hwnd:'h',title:'Claude'}, null, {summaryOnly:true})",ctx);
+  assert.equal(sourceSends,0,'选择 DS 后失败时不再向来源 AI 发送另一种交接指令');
+  assert.ok(sent.some(v=>v.note?.includes('DS 总结失败') || v.detail?.includes('DS 总结失败') || JSON.stringify(v).includes('DS 总结失败')));
 });
 
 test('API handoff shows the conversation it read and the history it replaced in the bubble', async () => {
@@ -1209,35 +1355,21 @@ test('handoff Esc arbitration: pet focused cancels at once; otherwise first Esc 
   assert.deepEqual(log, [], '还不了键时不占用全局 Esc');
 });
 
-test('handoff menu nests target tools under each source session, so picking a session never closes and re-pops the menu', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
-  const runs = [];
-  const ctx = vm.createContext({ path, handoffJob: null, lastAgentWin: { hwnd: 7, title: 'Codex' },
-    winsnap: { titledWindows: () => [{ hwnd: 7 }] }, handoff: { latest: () => null }, handoffSourceKey: () => 'codex', transcriptDirs: () => ['D:\\x'],
-    handoffApi: { KINDS: { codex: 'codex' }, recentSessions: () => [{ file: 'a', name: '甲' }, { file: 'b', name: '乙' }], newestTranscript: () => 'b', threadLabel: () => ({}) },
-    launchTargets: () => [{ id: 'claude', spec: { label: 'Claude Code' } }, { id: 'zcode', spec: { label: 'ZCode' } }],
-    runHandoff: (...a) => runs.push(a), probeSources: () => {}, shell: {}, log: () => {}, __dirname: 'D:\\app',
-    utilityProcess: { fork: () => { const w = new EventEmitter(); w.postMessage = (m) => posted.push(m); workers.push(w); return w; } } });
-  const posted = [], workers = [];
-  // 会话扫描在后台进程里跑（真实扫描逻辑走 session-worker 的 scan），主进程这次只发请求、不阻塞
-  const worker = mockedModule('src/main/session-worker.js', { './handoff-api': ctx.handoffApi });
-  vm.runInContext(source.slice(source.indexOf('let sessionCache'), source.indexOf('// 一键看')) + source.slice(source.indexOf('function currentHandoffSource('), source.indexOf('const sleep =')), ctx);
-  assert.equal(vm.runInContext('handoffMenu()', ctx).some((m) => m.submenu), false, '还没扫完：先不列会话，菜单照常弹');
-  vm.runInContext('handoffMenu()', ctx);
-  assert.equal(posted.length, 1, '扫描进行中不重复发请求');
-  assert.equal(workers.length, 1);
-  assert.deepEqual({ ...posted[0] }, { key: 'codex|Codex', kind: 'codex', dirs: ['D:\\x'], title: 'Codex' });
-  workers[0].emit('message', { key: posted[0].key, ...worker.scan(posted[0]) });
-  const menu = vm.runInContext('handoffMenu()', ctx);
-  assert.equal(posted.length, 1, '缓存新鲜时不再扫');
-  const sessions = menu.find((m) => m.submenu);
-  assert.equal(sessions.label, '换个会话交接（默认《乙》）');
-  const pick = sessions.submenu.find((m) => m.label === '《甲》').submenu.find((m) => m.label === '交给 ZCode');
-  pick.click();
-  assert.equal(runs[0][0], 'zcode');
-  assert.deepEqual({ ...runs[0][3] }, { kind: 'codex', file: 'a', name: '甲' });
-  menu.find((m) => m.label === '交给 Claude Code').click();
-  assert.equal(runs[1][3], null, '顶层目标走自动来源');
+test('flat transfer selection returns from a chosen session to tools and retains the pin across back navigation', () => {
+  const flow=require('../src/shared/transfer-flow');
+  let state=flow.initial();state=flow.change(state,{type:'target',target:1});assert.equal(state.view,'modes');
+  state=flow.change(state,{type:'sessions'});const selected={file:'source-b',name:'B'};
+  state=flow.change(state,{type:'session',session:selected});assert.equal(state.view,'targets');assert.equal(state.target,null);assert.equal(state.session,selected);
+  state=flow.change(state,{type:'target',target:2});state=flow.change(state,{type:'back'});assert.equal(state.view,'targets');assert.equal(state.session,selected);
+  state=flow.change(state,{type:'session',session:null});assert.equal(state.session,null);
+});
+
+test('flat transfer opens from the pet menu without nesting tools in native submenus', () => {
+  const source=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');
+  assert.match(source,/label: '🔁 转接到其他工具…', click: \(\) => openHandoffPicker\(\)/);
+  assert.ok(!source.includes('function handoffMenu('));assert.ok(!source.includes('function sessionMenu('));
+  const html=fs.readFileSync(path.join(__dirname,'../src/renderer/transfer.html'),'utf8');
+  assert.match(html,/<details id="more">[\s\S]*DS 总结后接手/);
 });
 
 test('source probe pops a menu with readable tools, in the same style as the session picker', () => {
@@ -1252,7 +1384,7 @@ test('source probe pops a menu with readable tools, in the same style as the ses
       recentSessions: (k) => (k === 'codex' ? [] : [{ name: `${k} 会话`, project: k === 'zcode' ? '默认工作区' : '', fresh: '3 分钟前动过' }]),
     },
   });
-  vm.runInContext(source.slice(source.indexOf('function probeSources('), source.indexOf('function handoffMenu(')), ctx);
+  vm.runInContext(source.slice(source.indexOf('function probeSources('), source.indexOf('let transferDialog =')), ctx);
   const rows = vm.runInContext('probeSources()', ctx);
   assert.equal(rows.length, 6);
   assert.equal(rows.filter((r) => r.ok).length, 5);
@@ -1599,8 +1731,10 @@ test('character selection reports the tool and model while keeping older reasons
 test('Cursor mascot follows the active model and falls back to the configured look', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
   const info = { value: { ok: true, character: 'gemini', label: 'Gemini 4 Argon' } };
+  const agentInfo = { value: null };
   const ctx = vm.createContext({ QUOTA_ONLY: false,
     cursorModel: { info: () => info.value },
+    agentModel: { info: () => agentInfo.value },
     config: { data: { providers: [] } },
     enabledProviders: () => [],
     allCharacters: () => [
@@ -1612,6 +1746,11 @@ test('Cursor mascot follows the active model and falls back to the configured lo
   vm.runInContext(source.slice(source.indexOf('function charOf('), source.indexOf('function characterImages(')), ctx);
   assert.equal(vm.runInContext("mascotOf('cursor')", ctx), 'gemini', 'Cursor 用 Gemini 时应该显示哈基米');
   assert.equal(vm.runInContext("mascotOf('codex')", ctx), 'codex', '普通工具仍走原来的角色映射');
+  agentInfo.value = { ok: true, character: 'kimi', model: 'kimi-k2.5' };
+  assert.equal(vm.runInContext("mascotOf('workbuddy')", ctx), 'kimi', 'WorkBuddy 会话模型能映射就跟随');
+  agentInfo.value = { ok: true, character: null, model: 'fast-model' };
+  assert.equal(vm.runInContext("mascotOf('workbuddy')", ctx), 'workbuddy', '档位名映射不到时回落 agent 自己的 look');
+  agentInfo.value = null;
   info.value = { ok: true, character: null, label: 'Auto' };
   assert.equal(vm.runInContext("mascotOf('cursor')", ctx), 'claude', 'Auto/无对应立绘时回落 Cursor 的默认 look');
   ctx.config.data.providers = [{ type: 'cursor', enabled: true, character: 'qwen' }];
@@ -1816,4 +1955,358 @@ test('Kimi desktop windows and kimi-agent writes both map to the kimi character'
     assert.equal(a.details.kimi > 0, true);
     assert.equal(a.active, 'kimi');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Public update/news polling is independent of actual account-quota events.
+const news = require('../src/main/news');
+const newsNow = Date.parse('2026-10-28T10:00:00Z');
+const newsFeed = news.PRESETS.find(f => f.type === 'tibo');
+const newsXml = (title, id = '123456', date = new Date(newsNow).toUTCString()) => `<rss><channel><item><guid>${id}</guid><title><![CDATA[${title}]]></title><link>https://x.noodl3.net/thsottiaux/status/${id}#m</link><pubDate>${date}</pubDate></item></channel></rss>`;
+
+test('news parses RSS entities and Atom alternate links without unsafe schemes', () => {
+  const a = news.parseFeed(`<feed><entry><id>x</id><title>Codex &amp; Tools</title><link rel='self' href='https://example.com/feed'/><link rel='alternate' href='https://example.com/release?a=1&amp;b=2'/><published>2026-10-28T09:00:00Z</published></entry></feed>`)[0];
+  assert.equal(a.title, 'Codex & Tools'); assert.equal(a.link, 'https://example.com/release?a=1&b=2');
+  assert.equal(news.parseFeed('<rss><item><title>x</title><link>javascript:alert(1)</link></item></rss>')[0].link, '');
+});
+
+test('Tibo announcements preserve original links and never become account reset events', () => {
+  const item = news.parseFeed(newsXml('We will reset usage limits tomorrow'))[0];
+  const event = news.eventFor(item, newsFeed, newsNow);
+  assert.equal(event.kind, 'quota-news'); assert.match(event.title, /待账户确认/);
+  assert.match(event.body, /不代表你的额度已重置/);
+  assert.equal(event.link, 'https://x.com/thsottiaux/status/123456');
+  assert.equal(news.eventFor({ ...item, title: 'Good morning' }, newsFeed, newsNow), null);
+  assert.equal(news.eventFor({ ...item, link: 'https://x.com/someone/status/123456' }, newsFeed, newsNow), null);
+});
+
+test('Tibo posts are triaged: retweet noise skipped, bumps/resets/outages titled for what they are', () => {
+  const mk = (title, id = '123456') => news.parseFeed(newsXml(title, id))[0];
+  // 转推/回复（转录源收进来的玩梗与重复内容）不再推送
+  assert.equal(news.eventFor(mk('R to @thsottiaux: Graduating from The Reset Company to The Token Company.'), newsFeed, newsNow), null);
+  assert.equal(news.eventFor(mk('RT @someone: usage limits talk'), newsFeed, newsNow), null);
+  // 加量/送额度：标题直说，附 codex 对照提示
+  const bump = news.eventFor(mk('Day 25/ We are doubling all usage limits for all Pro 100/200/500 tiers, effective today.'), newsFeed, newsNow);
+  assert.equal(bump.kind, 'quota-news');
+  assert.match(bump.title, /加量|赠送/);
+  assert.match(bump.body, /doubling all usage limits/);
+  assert.equal(bump.accountHint, 'codex');
+  // 重置预告
+  const reset = news.eventFor(mk('Day 23/ Much requested iCloud plugins. Just kidding, today is a reset.'), newsFeed, newsNow);
+  assert.match(reset.title, /预告重置/);
+  assert.equal(reset.accountHint, 'codex');
+  // 模型动态不冒充额度事件，也不附账号对照
+  const model = news.eventFor(mk('Codex 6.2 launched today'), newsFeed, newsNow);
+  assert.equal(model.kind, 'model-news');
+  assert.equal(model.accountHint, null);
+  // 与额度/模型都无关的帖子不推
+  assert.equal(news.eventFor(mk('Beautiful weather in SF today'), newsFeed, newsNow), null);
+});
+
+test('Tibo quota posts get an honest line about your own account state', () => {
+  const providers = [{ id: 'codex', type: 'codex', name: 'Codex / ChatGPT', enabled: true }];
+  const snaps = { codex: { ok: true, windows: [{ key: 'primary', label: '5小时', usedPercent: 100, resetsAt: Math.floor(Date.now() / 1000) + 3480 }] } };
+  const line = news.accountStatusLine(snaps, providers, 'codex');
+  assert.match(line, /你的 Codex \/ ChatGPT/);
+  assert.match(line, /已用 100%/);
+  assert.match(line, /后重置/);
+  assert.match(line, /以你的接口为准/);
+  assert.equal(news.accountStatusLine(snaps, [{ id: 'codex', type: 'codex', name: 'Codex', enabled: false }], 'codex'), '', 'disabled source: no line');
+  assert.match(news.accountStatusLine({}, providers, 'codex'), /读不到/);
+});
+
+test('news suppresses historical/future announcements and release prereleases', () => {
+  const item = news.parseFeed(newsXml('Reset tomorrow'))[0];
+  assert.equal(news.eventFor({ ...item, date: '2026-09-01T00:00:00Z' }, newsFeed, newsNow), null);
+  assert.equal(news.eventFor({ ...item, date: '2026-11-01T00:00:00Z' }, newsFeed, newsNow), null);
+  assert.equal(news.eventFor({ ...item, date: '' }, newsFeed, newsNow), null);
+  for (const title of ['v0.166.0-alpha.4', 'v1.2.0-rc1', 'v2.0-beta', 'nightly']) assert.equal(news.eventFor({ ...item, title }, news.PRESETS[0], newsNow), null);
+  assert.equal(news.eventFor({ ...item, title: 'v1.2.0' }, news.PRESETS[0], newsNow).kind, 'tool-update');
+});
+
+test('news establishes a silent baseline, deduplicates and preserves it across request failures', async () => {
+  let xml = newsXml('Codex model launched', '100');
+  const fetch = async () => ({ ok: true, text: xml });
+  const first = await news.checkFeeds([newsFeed], {}, { toolNews: true }, { fetch, now: newsNow });
+  assert.equal(first.events.length, 0); assert.equal(first.status[newsFeed.url].ok, true);
+  xml = newsXml('Usage reset tomorrow', '200');
+  const next = await news.checkFeeds([newsFeed], first.seen, { toolNews: true }, { fetch, now: newsNow });
+  assert.equal(next.events.length, 1); assert.equal(next.events[0].kind, 'quota-news');
+  const again = await news.checkFeeds([newsFeed], next.seen, { toolNews: true }, { fetch, now: newsNow });
+  assert.equal(again.events.length, 0);
+  const failed = await news.checkFeeds([newsFeed], next.seen, { toolNews: true }, { fetch: async () => ({ ok: false, status: 503 }), now: newsNow });
+  assert.deepEqual(failed.seen, next.seen); assert.equal(failed.status[newsFeed.url].ok, false); assert.match(failed.status[newsFeed.url].error, /503/);
+});
+
+test('news preferences are opt-in and separate preset/tool updates from custom RSS', () => {
+  const custom = { name: 'Custom', url: 'https://example.com/rss' };
+  assert.deepEqual(news.feedsFor({ rssFeeds: [custom] }), []);
+  assert.equal(news.feedsFor({ toolNews: true }).length, 4);
+  assert.deepEqual(news.feedsFor({ rss: true, rssFeeds: [custom] }), [custom]);
+  assert.equal(news.feedsFor({ toolNews: true, rss: true, rssFeeds: [newsFeed] }).length, 4);
+});
+
+
+test('session reader scopes SQLite tails to one session, preserves roles and never writes the source', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { readSession } = require('../src/main/session-reader');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-reader-'));
+  try {
+    const file = path.join(dir, 'session data.sqlite');
+    const db = new DatabaseSync(file);
+    db.exec('create table session(id text, directory text, title text); create table message(id text,session_id text,time_created integer,data text); create table part(message_id text,session_id text,time_created integer,data text)');
+    db.prepare('insert into session values(?,?,?)').run('s1',dir,'target');
+    for(let i=0;i<24;i++) {
+      db.prepare('insert into message values(?,?,?,?)').run('m'+i,'s1',i,JSON.stringify({role:i%2?'assistant':'user'}));
+      db.prepare('insert into part values(?,?,?,?)').run('m'+i,'s1',i,JSON.stringify({type:'text',text:'text-'+i}));
+    }
+    db.prepare('insert into message values(?,?,?,?)').run('other','s2',99,JSON.stringify({role:'user'}));
+    db.prepare('insert into part values(?,?,?,?)').run('other','s2',99,JSON.stringify({type:'text',text:'unrelated'}));
+    db.close();
+    const before=fs.readFileSync(file);
+    const r=readSession('zcode:'+file+'#s1',{limit:4});
+    assert.equal(r.title,'target'); assert.equal(r.project,dir); assert.equal(r.truncated,true);
+    assert.deepEqual(r.messages.map(m=>m.text),['text-20','text-21','text-22','text-23']);
+    assert.deepEqual(r.messages.map(m=>m.role),['user','assistant','user','assistant']);
+    assert.deepEqual(fs.readFileSync(file),before);
+    assert.throws(()=>readSession('zcode:'+file+'#missing'),/不存在/);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
+test('session reader bounds JSONL input and follows Cursor bubble order', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { readSession } = require('../src/main/session-reader');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-reader2-'));
+  try {
+    const file=path.join(dir,'log.jsonl');
+    fs.writeFileSync(file,'x'.repeat(160000)+'\n'+JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'latest task'}]}})+'\n');
+    const r=readSession(file); assert.equal(r.truncated,true); assert.equal(r.messages[0].text,'latest task');
+    const dbFile=path.join(dir,'state.vscdb'),db=new DatabaseSync(dbFile);
+    db.exec('create table cursorDiskKV(key text,value text)');
+    const put=(k,v)=>db.prepare('insert into cursorDiskKV values(?,?)').run(k,JSON.stringify(v));
+    put('composerData:c1',{name:'cursor task',workspaceIdentifier:{uri:{fsPath:dir}},fullConversationHeadersOnly:[{bubbleId:'b1',type:1},{bubbleId:'b2',type:2}]});
+    put('bubbleId:c1:b2',{text:'done'}); put('bubbleId:c1:b1',{text:'do this'}); put('bubbleId:other:b1',{text:'private other session'}); db.close();
+    const c=readSession('cursor:'+dbFile+'#c1'); assert.equal(c.project,dir); assert.deepEqual(c.messages.map(m=>m.text),['do this','done']);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('tool registry includes custom tools, configured locations and model capabilities without credentials', () => {
+  const {inspect}=require('../src/main/tool-registry');
+  const cfg={activity:{zcodeDir:os.tmpdir()},providers:[{id:'x',type:'cursor',name:'shared',enabled:true,apiKey:'fixture-secret'}],agents:[{id:'local-ai',name:'Local AI',dir:os.tmpdir(),modelFile:'model.json'}],launch:{}};
+  const result=inspect(cfg,{'local-ai':{kind:'app',target:'fixture.exe'}},{available:()=>true,modelInfo:()=>null});
+  const custom=result.tools.find(t=>t.id==='local-ai'); assert.ok(custom.dataFound); assert.ok(custom.modelSupported); assert.ok(custom.installed);
+  assert.equal(result.tools.find(t=>t.id==='zcode').dataPath,os.tmpdir());
+  assert.ok(!JSON.stringify(result).includes('fixture-secret'));
+});
+
+test('custom model state changes do not reuse cached results from a different file', () => {
+  const model=require('../src/main/agent-model'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-model-file-'));
+  try {const a=path.join(dir,'a.json'),b=path.join(dir,'b.txt');fs.writeFileSync(a,JSON.stringify({chat:{model:'grok-4.7'}}));fs.writeFileSync(b,'claude-sonnet-4.6');
+    assert.equal(model.info('custom',{modelFile:a,modelPath:'chat.model'}).character,'grok');
+    assert.equal(model.info('custom',{modelFile:b}).character,'claude');
+    assert.equal(model.info('custom',{modelFile:a,modelPath:'missing'}).ok,false);
+  } finally {model.resetCache();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('DSH pointer reader handles multiple zstd frames without writing or reading other sessions', () => {
+  const z=require('node:zlib'); if(!z.zstdCompressSync)return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-dsh-tail-'));
+  try { const file=path.join(dir,'session.jsonl.zstd');
+    const first=JSON.stringify({type:'session',cwd:dir})+'\n'+JSON.stringify({type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'real task'}]}})+'\n';
+    const second=JSON.stringify({type:'user/message',data:{source:{kind:'system'},content:[{type:'text',text:'injected reminder'}]}})+'\n'+JSON.stringify({type:'assistant/message',data:{message:{content:[{type:'text',text:'finished'}]}}})+'\n';
+    fs.writeFileSync(file,Buffer.concat([z.zstdCompressSync(Buffer.from(first)),z.zstdCompressSync(Buffer.from(second))]));
+    const r=require('../src/main/session-reader').readSession(file);assert.equal(r.project,dir);assert.deepEqual(r.messages.map(m=>m.text),['real task','finished']);
+    assert.equal(require('../src/main/handoff-api').sessionPointer('dsh',[],'',file).project,dir);
+  }finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('shared subscription without a numerical usage field is reported honestly without the legacy monthly fallback', async () => {
+  const {DatabaseSync}=require('node:sqlite');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-shared-empty-'));
+  try {const file=path.join(dir,'state.vscdb'),db=new DatabaseSync(file);db.exec('create table ItemTable(key text,value text)');const token=['fixture',Buffer.from(JSON.stringify({sub:'user|fixture'})).toString('base64url'),'fixture'].join('.');db.prepare('insert into ItemTable values(?,?)').run('cursorAuth/accessToken',token);db.close();
+    let legacyCalled=false;
+    const impl=mockedModule('src/main/providers/cursor.js',{'../http':{request:async(url,opts)=>{
+      if(url.includes('usage-summary')){legacyCalled=true;throw Error('legacy must not be called');}
+      if(url.endsWith('GetCurrentPeriodUsage')){assert.equal(JSON.parse(opts.body).includePooledUsage,true);return {ok:true,data:{billingCycleEnd:'1794041660437'}};}
+      return {ok:true,data:{isMerged:true,planInfo:{planName:'Premium',includedUsagePeriod:'INCLUDED_USAGE_PERIOD_WEEKLY'}}};
+    }}});
+    const s=await impl.fetchSnapshot({id:'cursor',type:'cursor',name:'shared',dbPath:file});assert.equal(s.ok,false);assert.equal(s.plan,'Premium');assert.equal(s.extra.shared,true);assert.match(s.error,/暂未返回周用量/);assert.equal(legacyCalled,false);assert.deepEqual(Array.from(s.windows),[]);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('direct handoff infers the real workspace from bounded ZCode tool workdirs instead of its scratch cwd', () => {
+  const {DatabaseSync}=require('node:sqlite');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-workspace-infer-'));
+  try {const project=path.join(dir,'project'),scratch=path.join(dir,'scratch');fs.mkdirSync(project);fs.mkdirSync(path.join(project,'.git'));fs.mkdirSync(scratch);
+    const file=path.join(dir,'state.sqlite'),db=new DatabaseSync(file);db.exec('create table session(id text,directory text,title text);create table message(id text,session_id text,time_created integer,data text);create table part(message_id text,session_id text,time_created integer,data text)');
+    db.prepare('insert into session values(?,?,?)').run('chosen',scratch,'target');db.prepare('insert into message values(?,?,?,?)').run('m','chosen',1,JSON.stringify({role:'assistant'}));
+    const put=(session,n,workdir)=>db.prepare('insert into part values(?,?,?,?)').run('m',session,n,JSON.stringify({type:'tool',tool:'exec_command',state:{input:{workdir,cmd:'fixture'},output:'ok',status:'completed'}}));
+    put('chosen',1,project);put('chosen',2,project);put('other',99,dir);db.close();
+    const h=require('../src/main/handoff-api');const p=h.sessionPointer('zcode',[],'','zcode:'+file+'#chosen');assert.equal(p.project,project);
+    const r=require('../src/main/session-reader').readSession('zcode:'+file+'#chosen');assert.equal(r.cwd,scratch);assert.deepEqual(r.workspaceHints.map(h=>h.workdir),[project,project]);assert.ok(!JSON.stringify(r.workspaceHints).includes('fixture'));
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('direct handoff reads Codex orchestration workdirs from the tail without confusing another referenced repo', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-jsonl-workdir-'));
+  try {const project=path.join(dir,'project'),scratch=path.join(dir,'scratch'),other=path.join(dir,'other');for(const p of [project,scratch,other])fs.mkdirSync(p);fs.mkdirSync(path.join(project,'.git'));fs.mkdirSync(path.join(other,'.git'));
+    const file=path.join(dir,'source.jsonl');const lines=[{type:'session_meta',payload:{cwd:scratch}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'continue'}]}},...Array.from({length:2},()=>({type:'response_item',payload:{type:'function_call',arguments:JSON.stringify({code:'await tools.exec_command('+JSON.stringify({workdir:project,cmd:'fixture'})+')'})}})),{type:'response_item',payload:{type:'function_call',arguments:JSON.stringify({file_path:path.join(other,'reference.md')})}}];
+    fs.writeFileSync(file,lines.map(d=>JSON.stringify(d)).join('\n'));
+    assert.equal(require('../src/main/handoff-api').sessionPointer('codex',[],'',file).project,project);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('direct transfer auto-detected and session-remembered workspaces never open a folder picker', async () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-no-folder-picker-'));
+  try {const project=path.join(dir,'project');fs.mkdirSync(project);const calls=[],promptMeta=[];let pickers=0;const pointer={ref:'source-1',project};
+    const ctx=vm.createContext({path,fs,process,__dirname:path.join(__dirname,'../src/main'),QUOTA_ONLY:false,handoffJob:null,handoffSerial:0,petWin:{},
+      handoffSourceKey:s=>s.character,pushHandoff:()=>{},updateTrayMenu:()=>{},escToCancel:()=>{},launchTargets:()=>[],transcriptDirs:()=>[],
+      handoffApi:{KINDS:{codex:'codex'},sessionPointer:()=>({...pointer})},handoffReturn:{find:()=>null},
+      state:{data:{},saveSoon:()=>{}},launcher:{supportsWorkspace:()=>true},app:{isPackaged:false},
+      dialog:{showOpenDialog:async()=>{pickers++;return {canceled:true};}},
+      handoff:{takeoverPrompt:(_f,m)=>{promptMeta.push(m);return m.from;}},clipboard:{writeText:()=>{}},
+      jobStep:(job,i,status,note)=>{if(i!==null&&status)job.steps[i].s=status;},
+      launchFor:async(_id,_spec,opts)=>{calls.push(opts);return {ok:false,message:'fixture stops before real launch'};},
+      finishJob:()=>{ctx.handoffJob=null;},log:()=>{},
+    });
+    const src=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');
+    vm.runInContext(src.slice(src.indexOf('async function runHandoff('),src.indexOf('function launchCurrent()')),ctx);
+    const run=()=>vm.runInContext("runHandoff('target',{kind:'app',label:'Target'},{character:'codex',title:'Source'},null,{direct:true})",ctx);
+    await run();assert.equal(pickers,0);assert.equal(calls[0].cwd,project);
+    pointer.project='';await run();assert.equal(pickers,0);assert.equal(calls[1].cwd,project,'same source reuses its confirmed workspace');
+    pointer.ref='source-2';await run();assert.equal(pickers,0,'unknown workspace is delegated without a folder picker');assert.equal(calls.length,3);assert.equal(calls[2].cwd,null,'do not reuse another session or the target tool default project');assert.equal(promptMeta[2].locateWorkspace,true);assert.equal(promptMeta[0].locateWorkspace,false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('fullscreen display preference is monitor-scoped and ignores desktop and own windows', () => {
+  const {shouldHideForFullscreen}=require('../src/main/visibility');const monitor={left:0,top:0,right:1920,bottom:1080},foreground={hwnd:'external',cls:'VideoWindow'};
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:false,foreground,rect:monitor,monitor}),true);
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:true,foreground,rect:monitor,monitor}),false);
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:false,foreground:{...foreground,cls:'Progman'},rect:monitor,monitor}),false);
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:false,foreground,rect:monitor,monitor,ownWindows:['external']}),false);
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:false,foreground,rect:{left:1920,top:0,right:3840,bottom:1080},monitor}),false);
+  assert.equal(shouldHideForFullscreen({showOverFullscreen:false,foreground,rect:{...monitor,bottom:1040},monitor}),false);
+});
+
+test('leaving fullscreen restores only temporary hides, never a manually hidden pet', () => {
+  const {petVisible}=require('../src/main/visibility');
+  assert.equal(petVisible({manualHidden:false,fullscreenHidden:true}),false);
+  assert.equal(petVisible({manualHidden:false,fullscreenHidden:false}),true);
+  assert.equal(petVisible({manualHidden:true,fullscreenHidden:true}),false);
+  assert.equal(petVisible({manualHidden:true,fullscreenHidden:false}),false);
+});
+
+
+test('compact transfer menu stays beside the pet and within each monitor work area', () => {
+  const {beside}=require('../src/shared/transfer-flow');
+  const area={x:0,y:0,width:1920,height:1040},pet={x:1720,y:860,width:150,height:180};
+  const p=beside(pet,area,300,380);assert.equal(p.x,1412);assert.equal(p.y,652);assert.equal(p.x+300+8,pet.x);
+  const left=beside({x:10,y:20,width:150,height:180},area,300,280);assert.equal(left.x,168);assert.equal(left.y,20);
+  const neg=beside({x:-1250,y:850,width:150,height:180},{x:-1280,y:0,width:1280,height:1024},300,400);
+  assert.ok(neg.x>=-1272&&neg.x+300<=-8);assert.ok(neg.y>=8&&neg.y+400<=1016);
+  const src=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');assert.match(src,/width:300,height:380,frame:false,transparent:true,resizable:false,skipTaskbar:true/);
+});
+
+
+test('Codex giant metadata rows and custom tool events still resolve workspace from the exact thread index', () => {
+  const {DatabaseSync}=require('node:sqlite'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-codex-current-format-'));
+  try {const project=path.join(dir,'project with spaces');fs.mkdirSync(project);fs.mkdirSync(path.join(project,'.git'));const sessions=path.join(dir,'sessions','2026');fs.mkdirSync(sessions,{recursive:true});const file=path.join(sessions,'rollout.jsonl');
+    fs.writeFileSync(file,[{type:'session_meta',payload:{large:'x'.repeat(180000),cwd:project}},{type:'response_item',payload:{type:'custom_tool_call',name:'functions.exec',input:'text(await tools.exec_command('+JSON.stringify({workdir:project,cmd:'fixture'})+'))'}},{type:'response_item',payload:{type:'custom_tool_call_output',output:'fixture result'}}].map(x=>JSON.stringify(x)).join('\n'));
+    const db=new DatabaseSync(path.join(dir,'state_5.sqlite'));db.exec('create table threads(rollout_path text,cwd text,title text)');db.prepare('insert into threads values(?,?,?)').run(file,project,'current task');db.prepare('insert into threads values(?,?,?)').run('other-ref',os.tmpdir(),'other');db.close();
+    const r=require('../src/main/session-reader').readSession(file);assert.equal(r.project,project);assert.equal(r.title,'current task');assert.ok(r.messages.some(m=>m.text.includes('fixture result')));assert.ok(r.workspaceHints.some(h=>h.workdir===project));assert.equal(require('../src/main/handoff-api').sessionPointer('codex',[],'',file).project,project);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('single explicit non-Git working directory and shell cd evidence resolve without asking for a folder', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-single-workdir-'));
+  try {const project=path.join(dir,'plain project');fs.mkdirSync(project);const file=path.join(dir,'log.jsonl');fs.writeFileSync(file,JSON.stringify({type:'response_item',payload:{type:'custom_tool_call',name:'shell',input:'Set-Location -LiteralPath '+JSON.stringify(project)+'; echo fixture'}}));
+    const p=require('../src/main/handoff-api').sessionPointer('codex',[],'',file);assert.equal(p.project,project);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('unresolved direct handoff explicitly asks the receiving AI to locate the workspace', () => {
+  const h=require('../src/main/handoff');const text=h.takeoverPrompt(null,{from:'fixture-source',tool:'not-installed',locateWorkspace:true});assert.match(text,/自动定位项目/);assert.match(text,/未定位前不改文件/);
+  const reader=require('../src/main/session-reader');assert.equal(reader.referenceKey('cursor:C:/tools/state.vscdb#AbC'),reader.referenceKey('cursor:C:\\tools\\state.vscdb#AbC'));
+});
+
+test('deferred workspace ignores a configured project for Windows and WSL terminals', async () => {
+  const spawned=[];const impl=mockedModule('src/main/launcher.js',{
+    electron:{shell:{}},'./winsnap':{},'./activity':{detectClaudeDirs:()=>[]},
+    child_process:{spawn:(cmd,args)=>{spawned.push({cmd,args});const child=new EventEmitter();child.unref=()=>{};process.nextTick(()=>child.emit('spawn'));return child;}}
+  });
+  for(const kind of ['cli','wsl-cli']) {const result=await impl.launch('fixture',{'fixture':{kind,label:'Fixture',command:'fixture-command',cwd:'missing-fixture-project',distro:'Fixture'}},{cwd:null});assert.equal(result.ok,true);}
+  assert.equal(spawned.length,2);assert.ok(!JSON.stringify(spawned).includes('missing-fixture-project'));
+});
+
+
+test('menu opens on the invocation side when space permits and points tool rows near the cursor', () => {
+  const {beside}=require('../src/shared/transfer-flow');const area={x:0,y:0,width:1920,height:1040},pet={x:500,y:300,width:150,height:180};
+  const left=beside(pet,area,300,330,8,{x:450,y:330});assert.equal(left.x,192);assert.equal(left.y,220);
+  const right=beside(pet,area,300,330,8,{x:680,y:330});assert.equal(right.x,658);assert.equal(right.y,220);
+  const constrained=beside({x:20,y:300,width:150,height:180},area,300,330,8,{x:10,y:330});assert.equal(constrained.x,178);
+});
+
+
+test('all tray app windows stay off the taskbar on creation, show and restore', () => {
+  const {keepOffTaskbar}=require('../src/main/window-policy');const win=new EventEmitter(),values=[];let destroyed=false;
+  win.isDestroyed=()=>destroyed;win.setSkipTaskbar=value=>values.push(value);keepOffTaskbar(win);win.emit('show');win.emit('restore');assert.deepEqual(values,[true,true,true]);destroyed=true;win.emit('show');assert.equal(values.length,3);
+  const main=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');assert.match(main,/browser-window-created[^\n]+keepOffTaskbar/);assert.match(main,/minHeight: 520, skipTaskbar:true/);
+});
+
+
+test('native taskbar policy preserves other styles and never changes another process window', {skip:process.platform!=='win32'}, () => {
+  let ex=0x80000|0x40000|0x20|0x8,writes=0,frames=0,foreign=false;
+  const api={};api.load=()=>({func:signature=>{
+    if(signature.includes('IsWindow('))return ()=>true;
+    if(signature.includes('GetWindowThreadProcessId'))return (_h,pid)=>{pid[0]=process.pid+(foreign?1:0);};
+    if(signature.includes('GetWindowLongPtrW'))return ()=>ex;
+    if(signature.includes('SetWindowLongPtrW'))return (_h,_index,value)=>{ex=value;writes++;};
+    if(signature.includes('SetWindowPos'))return (...args)=>{assert.equal(args.at(-1),0x237);frames++;};
+    throw Error(signature);
+  }});api.as=value=>value;
+  const impl=mockedModule('src/main/window-policy.js',{koffi:api}),win=new EventEmitter();win.isDestroyed=()=>false;win.setSkipTaskbar=()=>{};win.getNativeWindowHandle=()=>{const b=Buffer.alloc(8);b.writeBigUInt64LE(123n);return b;};
+  impl.keepOffTaskbar(win);assert.equal(ex,0x80000|0x20|0x8|0x80);assert.equal(writes,1);assert.equal(frames,1);win.emit('show');assert.equal(writes,1);foreign=true;ex=0x40000;win.emit('restore');assert.equal(writes,1);assert.equal(ex,0x40000);
+});
+
+test('opening an existing desktop app waits for focus and reports activation rejection without spawning again', async () => {
+  let complete, spawned=0;
+  const impl=mockedModule('src/main/launcher.js',{
+    electron:{shell:{}}, './winsnap':{findWindow:()=>({hwnd:'123'}),activateWindow:()=>new Promise(resolve=>{complete=resolve;})},
+    child_process:{spawn:()=>{spawned++;throw Error('must not reopen app');}},
+  });
+  const config={fixture:{kind:'app',target:'fixture.exe',label:'Fixture',process:'fixture.exe'}};
+  const pending=impl.launch('fixture',config);let done=false;pending.then(()=>done=true);
+  await Promise.resolve();assert.equal(done,false);
+  complete(false);const failure=await pending;
+  assert.equal(failure.ok,false);assert.equal(failure.route,'activate-existing');assert.match(failure.message,/未能激活/);assert.equal(spawned,0);
+  const success=impl.launch('fixture',config);complete(true);assert.equal((await success).ok,true);
+});
+
+test('desktop activation restores asynchronously, retries delayed restore, and never injects keyboard input', async () => {
+  const source=fs.readFileSync(path.join(__dirname,'../src/main/winsnap.js'),'utf8');
+  let iconic=true,foreground='other',valid=true,allow=true;const calls=[];
+  const a={IsWindow:()=>valid,IsIconic:()=>iconic,IsWindowVisible:()=>true,
+    ShowWindowAsync:(_h,cmd)=>calls.push(['restore',cmd]),
+    SetForegroundWindow:h=>{calls.push(['foreground',h]);if(!iconic&&allow)foreground=h;},GetForegroundWindow:()=>foreground};
+  const ctx=vm.createContext({init:()=>a,koffi:{as:String,address:String},BigInt,String,
+    setTimeout:fn=>{iconic=false;queueMicrotask(fn);}});
+  vm.runInContext(source.slice(source.indexOf('async function activateWindow('),source.indexOf('// 切到窗口并确认')),ctx);
+  assert.equal(await ctx.activateWindow('123'),true);assert.equal(calls[0][1],9);assert.equal(calls.filter(x=>x[0]==='foreground').length,2);
+  valid=false;calls.length=0;assert.equal(await ctx.activateWindow('123'),false);assert.equal(calls.length,0);
+  valid=true;allow=false;foreground='other';assert.equal(await ctx.activateWindow('123'),false);assert.equal(calls.length,4);
+});
+
+test('existing Codex windows use app lifecycle activation rather than manipulating a native HWND', async () => {
+  let scans=0,failed=false;const calls=[];
+  const impl=mockedModule('src/main/launcher.js',{
+    fs:{existsSync:()=>true},electron:{shell:{}},
+    './winsnap':{findWindow:()=>{scans++;return {hwnd:'stale-renderer-window'};},activateWindow:()=>{throw Error('must use app lifecycle');},bringToFront:()=>{throw Error('must not send Alt');}},
+    child_process:{spawn:(command,args)=>{calls.push({command,args});const child=new EventEmitter();child.unref=()=>{};process.nextTick(()=>child.emit(failed?'error':'spawn',failed?new Error('activation failed'):undefined));return child;}},
+  });
+  const result=await impl.launch('codex',{});
+  assert.equal(result.ok,true);assert.equal(result.route,'windows-app-activation');assert.equal(result.already,undefined);
+  assert.equal(scans,0);assert.equal(calls[0].command,'explorer.exe');assert.deepEqual(Array.from(calls[0].args),['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App']);
+  failed=true;const failure=await impl.launch('codex',{});assert.equal(failure.ok,false);assert.match(failure.message,/activation failed/);
 });

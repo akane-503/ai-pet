@@ -1,6 +1,23 @@
 'use strict';
 // 事件引擎：对比上一次快照与本次快照，产出通知（重置 / 赠送 / 上新 / 余额低 / 公告）
-const { fmtMoney } = require('./providers/util');
+const { fmtMoney, fmtCountdown } = require('./providers/util');
+
+// 窗口类赠送的“待领取”登记信息：桌宠会反复提醒直到用户点击已领取
+function giftClaim(provider, w, granted) {
+  return {
+    key: `gift:${provider.id}:${w.key}:${w.resetsAt || 'na'}`,
+    windowKey: w.key, label: w.label,
+    granted, remaining: Number.isFinite(w.remaining) ? w.remaining : null, resetsAt: w.resetsAt || null,
+    usedPercent: Number.isFinite(w.usedPercent) ? w.usedPercent : null,
+    unit: /token/i.test(w.label) ? 'token' : String(w.label).includes('积分') ? '积分' : '额度',
+  };
+}
+function giftExpirySuffix(w, now) {
+  const bits = [];
+  if (Number.isFinite(w.remaining)) bits.push(`剩 ${w.remaining}`);
+  if (w.resetsAt) bits.push(fmtCountdown(Math.max(0, w.resetsAt - now)) + '后过期');
+  return bits.length ? ' · ' + bits.join(' · ') : '';
+}
 
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 
@@ -43,12 +60,20 @@ function diffSnapshots(prev, next, provider, notifyCfg) {
   }
   // 窗口类
   if (Array.isArray(next.windows) && next.windows.length && prev && prev.ok && Array.isArray(prev.windows)) {
+    const now = Date.now() / 1000;
     for (const w of next.windows) {
-      const pw = prev.windows.find((x) => x.key === w.key) || prev.windows.find((x) => x.label === w.label);
-      if (!pw) continue;
+      // 第三个兜底：同一窗口换了标签（如体验期标注从「每日」改成「免费体验」）不算新窗口
+      const pw = prev.windows.find((x) => x.key === w.key) || prev.windows.find((x) => x.label === w.label)
+        || prev.windows.find((x) => x.unit !== undefined && x.unit === w.unit && x.total === w.total && Math.abs((x.resetsAt || 0) - (w.resetsAt || 0)) < 120);
+      if (!pw) {
+        // 凭空多出来的额度窗口多半是送的（赠送/体验额度常以独立窗口下发），登记为待领取
+        if (notifyCfg.gifts && Number.isFinite(w.usedPercent) && Number.isFinite(w.total) && w.total > 0) {
+          ev.push({ kind: 'gift', eventKey: `newwin:${w.key}:${w.resetsAt || next.at}`, title: `🎁 ${name} 新增了${w.label}额度`, body: `总量 ${w.total}${giftExpirySuffix(w, now)}`, claim: giftClaim(provider, w, w.total) });
+        }
+        continue;
+      }
       if (!Number.isFinite(pw.usedPercent) || !Number.isFinite(w.usedPercent)) continue;
       const drop = pw.usedPercent - w.usedPercent;
-      const now = Date.now() / 1000;
       const advanced = w.resetsAt && pw.resetsAt && w.resetsAt > pw.resetsAt + 120;
       const elapsed = pw.resetsAt && pw.resetsAt <= now + 5;
       const newlyExpired = w.expired && !pw.expired;
@@ -56,12 +81,14 @@ function diffSnapshots(prev, next, provider, notifyCfg) {
       const reset = (elapsed && (advanced || newlyExpired || (drop > 0 && w.usedPercent === 0))) || (drop > 0 && (advanced || (w.usedPercent === 0 && !pw.resetsAt)));
       if (reset && !pw.expired) {
         const early = pw.resetsAt && now < pw.resetsAt - 120;
-        if (early ? notifyCfg.gifts : notifyCfg.resets) ev.push({ kind: early ? 'gift' : 'reset', eventKey: `reset:${w.key}:${pw.resetsAt || prev.at}:${w.resetsAt || next.at}`, title: early ? `🎁 ${name} ${w.label}额度提前重置了` : `⏰ ${name} ${w.label}额度已重置`, body: `已用 ${Math.round(pw.usedPercent)}% → ${Math.round(w.usedPercent)}%，${w.expired ? '已到重置时间（本地估算，待接口确认）' : '新额度可用了'}` });
+        // Z.ai 端内重置卡用掉的表现就是周期内突然回满：顺带点破，别让人以为凭空恢复
+        const cardHint = early && provider.type === 'zhipu' ? '；如果是刚在 ZCode 里用了重置卡，就是它生效了' : '';
+        if (early ? notifyCfg.gifts : notifyCfg.resets) ev.push({ kind: early ? 'gift' : 'reset', eventKey: `reset:${w.key}:${pw.resetsAt || prev.at}:${w.resetsAt || next.at}`, title: early ? `🎁 ${name} ${w.label}额度提前重置了` : `⏰ ${name} ${w.label}额度已重置`, body: `已用 ${Math.round(pw.usedPercent)}% → ${Math.round(w.usedPercent)}%，${w.expired ? '已到重置时间（本地估算，待接口确认）' : '新额度可用了'}${cardHint}` });
       }
       const increased = Number.isFinite(w.total) && Number.isFinite(pw.total) && w.total > pw.total && !advanced;
       if (notifyCfg.gifts && increased) {
-        const unit = /token/i.test(w.label) ? 'token' : '额度';
-        ev.push({ kind: 'gift', eventKey: `limit:${w.key}:${pw.total}:${w.total}:${next.at}`, title: `🎁 ${name} ${w.label}增加了`, body: `+${w.total - pw.total} ${unit}，总量 ${pw.total} → ${w.total}` });
+        const unit = /token/i.test(w.label) ? 'token' : String(w.label).includes('积分') ? '积分' : '额度';
+        ev.push({ kind: 'gift', eventKey: `limit:${w.key}:${pw.total}:${w.total}:${next.at}`, title: `🎁 ${name} ${w.label}增加了`, body: `+${w.total - pw.total} ${unit}，总量 ${pw.total} → ${w.total}${giftExpirySuffix(w, now)}`, claim: giftClaim(provider, w, w.total - pw.total) });
       }
       const warn = Number(provider.warnPercent) || 90;
       if (notifyCfg.lowBalance && w.usedPercent >= warn && pw.usedPercent < warn) {

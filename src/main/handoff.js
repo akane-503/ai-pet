@@ -17,7 +17,7 @@ const skillCall = (tool, name) => (tool === 'gemini' || tool === 'cursor') ? `�
 function writePrompt(tool, home = os.homedir()) {
   const dir = SKILL_HOME[tool];
   if (dir && fs.existsSync(path.join(home, dir, 'skills', 'handoff', 'SKILL.md'))) return skillCall(tool, 'handoff');
-  return `请用 handoff 技能交接当前任务。没有该技能就在项目根目录写简短 HANDOFF.md（通常40–80行）：当前目标与关键约束、相关改动及未提交工作、验证状态、1–3个下一步；进度以Git和文件为准。保留原始对话路径/会话ID（无法获取就注明）、检索关键词及已有材料链接，接手默认读摘要，有需要再局部查上下文，不复制全部原话或历史。不初始化state或自动提交推送；覆盖前备份旧稿并保留路径。最后把交接文件的Windows绝对路径追加一行到 ${LATEST}（WSL下为 ${latestWsl()}，用wslpath -w转换；目录不存在就新建）。`;
+  return `请用 handoff 技能交接当前任务。没有该技能就在 ~/.handoff/cache/ 写简短 HANDOFF.md（目录不存在就新建，不要写进仓库）（通常40–80行）：当前目标与关键约束、相关改动及未提交工作、验证状态、1–3个下一步；进度以Git和文件为准。保留原始对话路径/会话ID（无法获取就注明）、检索关键词及已有材料链接，接手默认读摘要，有需要再局部查上下文，不复制全部原话或历史。不初始化state或自动提交推送；覆盖前备份旧稿并保留路径。最后把交接文件的Windows绝对路径追加一行到 ${LATEST}（WSL下为 ${latestWsl()}，用wslpath -w转换；目录不存在就新建）。`;
 }
 
 // 文件在目标工具打开的那个目录里就只写相对路径（回原会话的指令还带着文件名）
@@ -33,7 +33,17 @@ function shortPath(file, root) {
 
 // 接手指令只留一小段：技能命令 + 任务名。读哪个文件由 takeover 技能自己按任务名找
 // （顺序见 skills/takeover/SKILL.md），所以指令里不塞路径；目标工具没装技能时才退回带路径的一句
+// meta.from 走「指针接手」：不指向文件，指向来源工具的本地会话（路径或 zcode:/cursor: 引用），
+// 接手方自己读记录尾部开工，全程不产生交接文件
 function takeoverPrompt(file, meta = {}) {
+  if (meta.from) {
+    const source = String(meta.from).replace(/\\/g, '/');
+    const reader = meta.reader ? ` --reader "${String(meta.reader).replace(/\\/g, '/')}"` : '';
+    const locate = meta.locateWorkspace ? ' --locate-workspace' : '';
+    const skill = SKILL_HOME[meta.tool];
+    if (skill && fs.existsSync(path.join(meta.home || os.homedir(), skill, 'skills', 'takeover', 'SKILL.md'))) return `${skillCall(meta.tool, 'takeover')} --from "${source}"${reader}${locate}`;
+    return `接手来源会话 "${source}"${reader}：${meta.locateWorkspace?'先只读来源记录，依据 cwd、workspaceHints 和明确的工具工作目录自动定位项目；未定位前不改文件；':''}只读指定会话尾部，先确定最后真实用户请求与未完成项，核对工作目录和 Git（status + diff --stat）后继续；若已完成只报告验收，不重做、不自动提交；不新写交接文件`;
+  }
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').replace(/[[\]【】]/g, '').split(/[：:，,。；;、（(]/)[0].trim().slice(0, 24);
   // 交接文件名里通常已经是任务名（HANDOFF-修复桌宠工具切换与提醒.md）
   const named = /^HANDOFF-(.+)$/i.exec(path.basename(String(file || ''), '.md'));

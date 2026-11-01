@@ -18,7 +18,7 @@ const APPS = {
   gemini: { name: 'Gemini 桌面版', process: 'Gemini.exe', title: '^(Google\\s+)?Gemini(\\b|$)', paths: [path.join(LOCAL, 'Google', 'Gemini', 'Gemini.exe')], url: 'https://gemini.google.com', web: 'Gemini' },
   qwen: { name: '千问', label: '^(千问|通义千问|通义)$', url: 'https://www.qianwen.com', web: '千问' },
   kimi: { name: 'Kimi', label: '^Kimi(智能助手)?$', url: 'https://www.kimi.com', web: 'Kimi' },
-  grok: { name: 'Grok', url: 'https://grok.com', web: 'Grok' }, // xAI 没有官方 Windows 客户端
+  grok: { name: 'Grok Bot', process: 'Grok Bot.exe', title: '^Grok Bot', url: 'https://grok.com', web: 'Grok' },
   seed: { name: '豆包', process: 'Doubao.exe', label: '^豆包$', url: 'https://www.doubao.com', web: '豆包' },
 };
 
@@ -30,10 +30,17 @@ function claudeSpec(dirs) {
   if (wslDir) return { kind: 'wsl-cli', label: 'Claude Code (WSL)', distro: wslDir.split('\\')[3] || '', command: 'claude', cwd: '~' };
   return claudeWinSpec() || agentSpec(CLAUDE_APP);
 }
+// CLI 装在哪都能被认出：npm 全局 / ~/.local/bin / PATH（含 scoop、choco 等装法），不只认固定目录
+const cliDirs = () => [path.join(process.env.APPDATA || '', 'npm'), path.join(HOME, '.local', 'bin'), ...(process.env.PATH || '').split(path.delimiter)].map((d) => d.replace(/^"|"$/g, '')).filter(Boolean);
+function findCommand(command) {
+  if (!/^[\w.-]+$/.test(command)) return null;
+  const exts = path.extname(command) ? [''] : ['.exe', '.cmd', '.bat', '.com', ''];
+  for (const dir of cliDirs()) for (const ext of exts) { const p = path.join(dir, command + ext); if (exists(p)) return p; }
+  return null;
+}
 // Windows 本机装的 Claude Code CLI（和 WSL 版可以并存）
 function claudeWinSpec() {
-  const cli = [path.join(HOME, '.local', 'bin', 'claude.exe'), path.join(process.env.APPDATA || '', 'npm', 'claude.cmd')].find(exists);
-  return cli ? { kind: 'cli', label: 'Claude Code (Windows)', command: 'claude' } : null;
+  return findCommand('claude') ? { kind: 'cli', label: 'Claude Code (Windows)', command: 'claude' } : null;
 }
 // VS Code 系编辑器：把文件夹当参数就能打开工作区（已开着也会转给现有实例）
 // DSH / ZCode 使用显式开关；WorkBuddy 与编辑器接受目录参数。
@@ -48,9 +55,9 @@ function defaults() {
     gemini: geminiSpec(),
   };
 }
-// Gemini：装了 Gemini CLI（npm 全局）就开终端，否则桌面版 / 网页
+// Gemini：装了 Gemini CLI（任意位置）就开终端，否则桌面版 / 网页
 function geminiSpec() {
-  return exists(path.join(process.env.APPDATA || '', 'npm', 'gemini.cmd')) ? { kind: 'cli', label: 'Gemini CLI', command: 'gemini' } : agentSpec(APPS.gemini);
+  return findCommand('gemini') ? { kind: 'cli', label: 'Gemini CLI', command: 'gemini' } : agentSpec(APPS.gemini);
 }
 
 const exeNames = (a) => String(a.process || '').split('|').map((x) => x.trim()).filter(Boolean);
@@ -59,7 +66,7 @@ const found = {}; // exe 小写名 / '@显示名正则' -> 搜到的完整路径
 const tried = new Set(); // 本次运行已搜过的名字，搜不到也不重复跑
 let pending = Promise.resolve(found); // 正在跑的搜索，后来的调用等它结束
 
-// 一次 PowerShell 找 exe：正在运行的进程 > 卸载注册表 > App Paths > 开始菜单/桌面快捷方式 > 各盘两层目录
+// 一次 PowerShell 找 exe：正在运行的进程 > 卸载注册表 > App Paths > 开始菜单/桌面快捷方式 > 常见安装目录
 const FIND_PS = `[Console]::OutputEncoding=[Text.Encoding]::UTF8
 $names=@(__NAMES__); $labels=@(__LABELS__); $hits=@{}
 function Clean($p){ ($p -replace ',-?\\d+$','').Trim().Trim('"') }
@@ -74,12 +81,13 @@ Get-ItemProperty "HKCU:\\$u\\Uninstall\\*","HKLM:\\$u\\Uninstall\\*","HKLM:\\Sof
 Get-ItemProperty "HKCU:\\$u\\App Paths\\*","HKLM:\\$u\\App Paths\\*" -EA 0 | % { Add $_.'(default)' }
 $sh=New-Object -ComObject WScript.Shell
 Get-ChildItem "$env:APPDATA\\Microsoft\\Windows\\Start Menu","$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:USERPROFILE\\Desktop","$env:PUBLIC\\Desktop" -Recurse -Filter *.lnk -EA 0 | % { $t=$sh.CreateShortcut($_.FullName).TargetPath; Add $t; AddLabel $_.BaseName $t }
-foreach($n in $names){ if(!$hits[$n]){ foreach($d in (Get-PSDrive -PSProvider FileSystem).Root){ Resolve-Path "$d*\\$n","$d*\\*\\$n" -EA 0 | % { Add $_.Path } } } }
+foreach($n in $names){ if(!$hits[$n]){ foreach($d in @("$env:LOCALAPPDATA\\Programs",$env:ProgramFiles,([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')))){ if($d){ Resolve-Path "$d\\$n","$d\\*\\$n" -EA 0 | % { Add $_.Path } } } } }
 $hits | ConvertTo-Json -Compress`;
 
 // 后台搜一次，结果进 found；agentSpec 同步读缓存
-function discover(agents = []) {
-  const all = [...agents, ...Object.values(APPS), CLAUDE_APP];
+function discover(agents = [], { force = false } = {}) {
+  if (force) { tried.clear(); for (const key of Object.keys(found)) delete found[key]; }
+  const all = [...agents, ...Object.values(APPS), CLAUDE_APP, { process: 'Codex.exe|ChatGPT.exe', label: '^(Codex|ChatGPT)$' }];
   const fresh = (xs) => [...new Set(xs)].filter((n) => n && !tried.has(n));
   const names = fresh(all.flatMap(exeNames).map((x) => x.toLowerCase()));
   const labels = fresh(all.map((a) => a.label || ''));
@@ -116,10 +124,21 @@ function menuAvailable(spec) {
   if (path.isAbsolute(command)) return exists(command);
   // 自定义脚本/复合命令不能靠文件名判断，保留；普通 CLI 按 PATH 和常用安装目录检查。
   if (!/^[\w.-]+$/.test(command)) return true;
-  const dirs = [path.join(process.env.APPDATA || '', 'npm'), path.join(HOME, '.local', 'bin'), ...(process.env.PATH || '').split(path.delimiter)].filter(Boolean);
-  const extensions = path.extname(command) ? [''] : ['', '.exe', '.cmd', '.bat', '.com'];
-  return dirs.some(dir => extensions.some(ext => exists(path.join(dir.replace(/^"|"$/g, ''), command + ext))));
+  return !!findCommand(command);
 }
+
+// 设置页只把有本机证据的入口标成已发现，网页回退不算安装成功。
+function localAvailable(spec) {
+  if (!spec) return false;
+  if (spec.kind === 'store') return Object.entries(found).some(([key,value]) => /codex|chatgpt/i.test(key) && exists(value));
+  if (spec.kind === 'url') return false;
+  if (spec.kind === 'wsl-cli') return !!spec.distro && exists(`\\\\wsl.localhost\\${spec.distro}\\home`);
+  return menuAvailable(spec);
+}
+
+// 旧设置曾用角色名填启动标签（如「Grok 娘 · xAI」「哈基米 · Gemini」）；工具菜单统一显示入口名。
+// 「娘」结尾 / 哈基米 开头（可带「· 厂商」后缀）的一律视为角色名，回落到内置工具名；其他自定义名称保留。
+const CHARACTER_LABEL_RE = /^(?:[^·・]*娘|哈基米)(?:\s*[·・].*)?$/;
 
 function resolve(characterId, userLaunch) {
   const d = defaults()[characterId];
@@ -127,9 +146,11 @@ function resolve(characterId, userLaunch) {
   if (u && u.kind) {
     const spec = { ...(u.kind === d?.kind ? d : {}), ...u };
     if (u.kind === 'url' && u.target) spec.webFallback = false;
-    // 旧设置曾用角色名填启动标签；工具菜单只显示入口名，保留其他自定义名称。
-    if (characterId === 'gemini' && /^哈基米\s*[·・]\s*Gemini$/i.test(spec.label || '')) {
-      spec.label = /cli$/.test(spec.kind) ? 'Gemini CLI' : spec.kind === 'url' ? 'Gemini 网页' : 'Gemini 桌面版';
+    // 角色名标签回落工具入口名：app 用目标 exe 名，其余按默认名去掉形态后缀后按方式重建
+    if (d && d.label && CHARACTER_LABEL_RE.test(String(spec.label || ''))) {
+      const exe = spec.kind === 'app' && spec.target ? path.basename(String(spec.target)).replace(/\.exe$/i, '') : '';
+      const base = d.label.replace(/ (桌面版|网页|CLI)$/, '');
+      spec.label = exe || (spec.kind === 'url' ? `${base} 网页` : /cli$/.test(spec.kind) ? `${base} CLI` : d.kind === spec.kind ? d.label : `${base} 桌面版`);
     }
     if (u.target && u.target !== (d || {}).target) {
       if (!u.process) spec.process = u.kind === 'app' ? path.basename(u.target) : null;
@@ -149,8 +170,7 @@ function isRunning(spec) {
   return null;
 }
 
-// bringToFront 带 Alt 解锁：一键交接时桌宠不在前台，普通 SetForegroundWindow 会被系统拦下
-function focus(hwnd) { try { winsnap.bringToFront(hwnd); } catch (_) { /* */ } }
+async function focus(hwnd) { try { return await winsnap.activateWindow(hwnd); } catch (_) { return false; } }
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -185,13 +205,20 @@ async function launch(characterId, userLaunch, { cwd = '', prompt = '', session 
   if (!spec) return { ok: false, message: '这个角色还没配置启动方式' };
   const resume = session && require('./handoff-return').UUID.test(session.id || '') && session.tool === characterId;
   if ((spec.kind === 'cli' || spec.kind === 'wsl-cli') && !String(spec.command || '').trim()) return { ok: false, message: '请在设置中填写启动命令' };
-  const configured = cwd || spec.cwd || '';
+  // null 表示来源工作区待目标 AI 定位，不能误用另一个项目的启动覆盖目录。
+  const configured = cwd === null ? '' : cwd || spec.cwd || '';
   const nativeDirectory = configured && !(spec.kind === 'wsl-cli' && !/^(?:[a-z]:[\\/]|\\\\)/i.test(configured));
   if (nativeDirectory && supportsWorkspace(spec) && !workspaceDirectory(configured)) return { ok: false, message: '工作目录不存在或不是文件夹，请在设置中重新选择' };
   const ws = nativeDirectory && supportsWorkspace(spec) ? configured : '';
-  const running = isRunning(spec);
+  // Codex 的恢复入口还会处理主窗口/快捷窗口生命周期和渲染焦点。
+  // 直接 ShowWindow/SetForegroundWindow 会绕过它，即使 HWND 到了前台也可能无法交互。
+  const managedActivation = spec.kind === 'store' && CODEX_STORE_ID.test(spec.target || '');
+  const running = managedActivation ? null : isRunning(spec);
   if (running && !resume && !ws && (spec.kind === 'app' || spec.kind === 'store')) {
-    if (running.window) { focus(running.window.hwnd); return { ok: true, message: `${spec.label} 已经开着啦`, already: true }; }
+    if (running.window) {
+      const focused = await focus(running.window.hwnd);
+      return { ok: focused, message: focused ? `${spec.label} 已经开着啦` : `${spec.label} 已打开，但未能激活窗口，请点击它的任务栏图标`, already: true, route: 'activate-existing', hwnd: running.window.hwnd };
+    }
   }
   try {
     switch (spec.kind) {
@@ -218,11 +245,11 @@ async function launch(characterId, userLaunch, { cwd = '', prompt = '', session 
         // 仅使用用户明确配置的脚本，默认走 Windows 注册的桌面入口。
         if (spec.script && exists(spec.script)) await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', spec.script, '-NoKill'], { windowsHide: true });
         else await run('explorer.exe', ['shell:AppsFolder\\' + spec.target]);
-        return { ok: true, message: '正在打开 ' + spec.label };
+        return { ok: true, message: '已请求应用打开 ' + spec.label, route: spec.script && exists(spec.script) ? 'configured-script' : 'windows-app-activation' };
       case 'wsl-cli': {
         const distro = spec.distro || '';
         const cmd = require('./handoff-return').cliResume(characterId, spec, session) || spec.command;
-        const cwd = ws ? toWslPath(ws) : (spec.cwd || '~');
+        const cwd = ws ? toWslPath(ws) : (configured || '~');
         const wt = path.join(HOME, 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'wt.exe');
         // 登录 shell 里跑，保证 PATH（nvm/.local/bin）和 settings.json 生效
         const bash = [...(distro ? ['-d', distro] : []), '--cd', cwd, '--', 'bash', '-lic', `${cmd}; exec bash`];
@@ -246,4 +273,4 @@ async function launch(characterId, userLaunch, { cwd = '', prompt = '', session 
   } catch (e) { return { ok: false, message: e.message }; }
 }
 
-module.exports = { launch, resolve, defaults, isRunning, agentSpec, discover, claudeSpec, claudeWinSpec, supportsWorkspace, codexDraftUrl, menuAvailable, FIND_PS };
+module.exports = { launch, resolve, defaults, isRunning, agentSpec, discover, claudeSpec, claudeWinSpec, supportsWorkspace, codexDraftUrl, menuAvailable, localAvailable, FIND_PS };

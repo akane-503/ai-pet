@@ -5,6 +5,7 @@ const fs = require('fs');
 const { JsonStore, defaultConfig, defaultState, deepMerge, AGENT_PRESETS } = require('./config');
 const providers = require('./providers');
 const notifyEngine = require('./notify');
+const gifts = require('./gifts');
 const activity = require('./activity');
 const importers = require('./importers');
 const news = require('./news');
@@ -16,22 +17,24 @@ const handoffReturn = require('./handoff-return');
 const handoffEstimate = require('./handoff-estimate');
 const handoffApi = require('./handoff-api');
 const cursorModel = require('./cursor-model');
+const agentModel = require('./agent-model');
 const http = require('./http');
 const desktopDraft = require('./desktop-draft');
 const geometry = require('../shared/geometry');
 const EDITION = require('./edition');
-const QUOTA_ONLY = EDITION.quotaOnly;
+// 安装时未勾「启用工具转接」= 额度纯享（原 B 版）行为；由 install-features.txt 在启动时决定，见下方 installFeatures()
+let QUOTA_ONLY = false;
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const ASSETS = path.join(ROOT, 'assets');
 const IS_WIN = process.platform === 'win32';
 const dataDirArg = process.argv.find((arg) => arg.startsWith('--data-dir='));
-if (QUOTA_ONLY) { app.setName(EDITION.name); app.setPath('userData', path.join(app.getPath('appData'), EDITION.name)); }
 if (dataDirArg) app.setPath('userData', path.resolve(dataDirArg.slice('--data-dir='.length)));
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 if (IS_WIN) app.setAppUserModelId(app.isPackaged ? EDITION.id : process.execPath);
+app.on('browser-window-created',(_event,win)=>require('./window-policy').keepOffTaskbar(win));
 
 const userData = app.getPath('userData');
 const config = new JsonStore(path.join(userData, 'config.json'), defaultConfig);
@@ -65,6 +68,14 @@ try {
   // Key 只会是可见 ASCII；NSIS 按 ANSI 写中文会变乱码，进了请求头直接报 ByteString 错
   if (/^sk-[\x21-\x7e]+$/.test(key)) { Object.assign(config.data.quips, { apiKey: key, enabled: true }); config.save(); }
 } catch (_) { /* 没有就是没填 */ }
+// 安装器把「启用工具转接」的选择留在 install-features.txt（handoff=1/0）；每次启动读走并入配置——重装时改选项即生效
+try {
+  const fseed = path.join(userData, 'install-features.txt');
+  const fv = fs.readFileSync(fseed, 'utf8').replace(/^\uFEFF/, '').trim();
+  fs.unlinkSync(fseed);
+  if (/^handoff=(0|1)$/m.test(fv)) { config.data.features = { ...(config.data.features || {}), handoff: /handoff=1/.test(fv) }; config.save(); }
+} catch (_) { /* 没有就是沿用现状 */ }
+QUOTA_ONLY = config.data.features.handoff === false;
 
 // colors: [描边/主色, 正文, 提示]
 const CHARACTERS = [
@@ -112,6 +123,9 @@ function mascotOf(key) {
     if (p && p.character && p.character !== 'cursor' && allCharacters().some((c) => c.id === p.character)) return p.character;
     return 'claude';
   }
+  // WorkBuddy 等多模型 agent：会话模型能映射到厂商角色就跟随，否则回落 agent 自己的 look
+  const m = agentModel.info(key, (config.data.agents || []).find(a => a.id === key) || {});
+  if (m && m.character) return m.character;
   return charOf(key) || key;
 }
 function characterImages() {
@@ -204,7 +218,7 @@ function activeProviderIds() {
 }
 // ---------- 台词生成（DeepSeek API） ----------
 let quipsBusy = false;
-function codexHome() { const p = (config.data.providers || []).find((x) => x.type === 'codex' && x.codexHome); return (p && p.codexHome) || (config.data.activity || {}).codexDir; }
+function codexHome() { const p = (config.data.providers || []).find((x) => x.type === 'codex' && x.codexHome); return (p && p.codexHome) || (config.data.activity || {}).codexDir || path.join(app.getPath('home'), '.codex'); }
 function quipsKey() { const q = config.data.quips || {}; if (q.apiKey) return q.apiKey; const ds = (config.data.providers || []).find((p) => p.type === 'deepseek' && p.apiKey); return ds ? ds.apiKey : ''; }
 async function refreshQuips({ force = false } = {}) {
   if (QUOTA_ONLY) return { ok: false, message: 'B 版仅查询额度' };
@@ -237,15 +251,33 @@ async function refreshQuips({ force = false } = {}) {
   finally { quipsBusy = false; }
 }
 function whyCharacter() { return characterSelection().why; }
+let petManuallyHidden=false,petFullscreenHidden=false;
+function applyPetVisibility() {
+  if(!petWin||petWin.isDestroyed())return;
+  const visible=require('./visibility').petVisible({manualHidden:petManuallyHidden,fullscreenHidden:petFullscreenHidden});
+  if(visible&&!petWin.isVisible())petWin.showInactive();
+  else if(!visible&&petWin.isVisible()){closePanel();petWin.hide();}
+}
+function setPetVisible(visible) {petManuallyHidden=!visible;applyPetVisibility();updateTrayMenu();}
+function updatePetFullscreenVisibility(fg) {
+  if(!petWin||petWin.isDestroyed())return;
+  const display=displayFor(petRect()),origin=screen.dipToScreenPoint({x:display.bounds.x,y:display.bounds.y});
+  const monitor={left:origin.x,top:origin.y,right:origin.x+display.bounds.width*display.scaleFactor,bottom:origin.y+display.bounds.height*display.scaleFactor};
+  const ownWindows=BrowserWindow.getAllWindows().map(w=>{try{const b=w.getNativeWindowHandle();return String(b.length>=8?b.readBigUInt64LE(0):b.readUInt32LE(0));}catch(_){return '';}});
+  const hidden=require('./visibility').shouldHideForFullscreen({showOverFullscreen:config.data.appearance.showOverFullscreen,foreground:fg,rect:fg?winsnap.windowRect(fg.hwnd):null,monitor,ownWindows});
+  if(hidden!==petFullscreenHidden){petFullscreenHidden=hidden;applyPetVisibility();updateTrayMenu();}
+}
 // 每秒看前台窗口，进程身份不受会话标题变化影响。
 function checkWindows() {
   try {
     const fg = winsnap.foregroundWindow();
+    updatePetFullscreenVisibility(fg);
     const fgc = activity.routeForWindow(fg, config.data.activity, config.data.providers, agents());
     if (fgc && fg.hwnd !== ownHwnd()) {
       const mascot = mascotOf(fgc);
-      const info = fgc === 'cursor' ? cursorInfo() : null;
-      const label = fgc === 'cursor' ? 'Cursor' + (info && info.ok ? ' · ' + (info.label || 'Auto') : '') : null;
+      const info = fgc === 'cursor' ? cursorInfo() : agentModel.info(fgc, agents().find(a => a.id === fgc) || {});
+      const toolName = fgc === 'cursor' ? 'Cursor' : (agents().find((a) => a.id === fgc) || {}).name || fgc;
+      const label = info && info.ok && (info.model || info.label) ? `${toolName} · ${info.label || info.model}` : null;
       foreground = { character: mascot, at: Date.now(), tool: fgc, label };
       lastAgentWin = { hwnd: fg.hwnd, title: fg.title, tool: fgc, character: fgc, mascot };
       recent = { character: mascot, at: Date.now(), reason: 'focus', label };
@@ -274,6 +306,7 @@ function pushData() {
   const payload = {
     snapshots: state.data.snapshots, ledgers: state.data.ledgers, config: publicConfig(), activity: lastActivity, character, quotaOnly: QUOTA_ONLY,
     characters: allCharacters(), characterImages: characterImages(), notifications: state.data.notifications.slice(0, 50), maxBalanceSeen: state.data.maxBalanceSeen,
+    giftClaims: (state.data.giftClaims || []).filter((c) => !c.claimed && !c.resolved),
     snapAvailable: winsnap.available(), refreshing, launchLabel: (launcher.resolve(character, launchCfg()) || {}).label || null,
     colors: (allCharacters().find((c) => c.id === character) || CHARACTERS[0]).colors, why: whyCharacter(), activeProviders: activeProviderIds(),
     quips: (state.data.quips && state.data.quips.byCharacter) || {},
@@ -294,6 +327,7 @@ function panelPlace(W, H) {
 }
 let panelShown = false, panelFallback = null;
 function togglePanel() {
+  if(transferDialog && !transferDialog.win.isDestroyed())transferDialog.win.close();
   if (panelWin && !panelWin.isDestroyed()) { closePanel(); return; }
   if (!petWin) return;
   const W = 296, H = 400;
@@ -338,11 +372,28 @@ function pushNotification(ev, providerId) {
       t.show();
     } catch (e) { log('toast failed', e.message); }
   }
-  // 气泡已经念过的就算读过，消息记录里不再堆未读红点；只有免打扰时段错过的才留未读
-  if (nc.bubble && !quiet) { n.read = true; if (petReady) sendPet('notify', n); else pendingNotices.push(n); }
+  // 气泡已经念过的就算读过，消息记录里不再堆未读红点；只有免打扰时段错过的才留未读。
+  // 送额度待领取例外：保持未读，直到用户点「已领取」（托盘未读数也是领取提醒的一部分）
+  if (nc.bubble && !quiet) { if (!ev.claim) n.read = true; if (petReady) sendPet('notify', n); else pendingNotices.push(n); }
   sendSettings('notification', n);
   updateTrayMenu();
   return n;
+}
+
+// ---------- 送额度待领取 ----------
+// 纯逻辑在 gifts.js：这里负责把结果落到通知、气泡和数据库
+function upsertGiftClaim(p, claim, notif) { return gifts.upsertGiftClaim(state.data.giftClaims || (state.data.giftClaims = []), p, claim, notif ? notif.id : null); }
+function checkGiftReminders() {
+  const list = state.data.giftClaims || [];
+  if (!list.length) return;
+  const nc = config.data.notify;
+  const r = gifts.collectGiftReminders(list, { snapshots: state.data.snapshots, providerById, notify: nc, quiet: notifyEngine.inQuietHours(nc.quietHours) });
+  for (const u of r.recordUpdates) { const rec = state.data.notifications.find((x) => x.id === u.id); if (rec) { rec.ts = u.ts; rec.body = u.body; rec.read = false; } }
+  for (const id of r.readIds) { const rec = state.data.notifications.find((x) => x.id === id); if (rec && !rec.read) rec.read = true; }
+  for (const n of r.notices) { if (petReady) sendPet('notify', n); else pendingNotices.push(n); sendSettings('notification', n); }
+  const pruned = gifts.pruneGiftClaims(list);
+  if (pruned.length !== list.length) state.data.giftClaims = pruned;
+  if (r.dirty || pruned.length !== list.length) { state.saveSoon(); updateTrayMenu(); pushData(); }
 }
 
 // ---------- 刷新 ----------
@@ -370,7 +421,10 @@ async function refreshAll({ force = false, reason = 'timer' } = {}) {
           const full = p.type === 'deepseek' ? (Number(config.data.appearance.fullAmountCNY) || 100) : Math.max(state.data.maxBalanceSeen[p.id] || 0, s.currency === 'USD' ? 20 : 100);
           s.fraction = Math.max(0, Math.min(1, s.balance / full));
         }
-        for (const ev of notifyEngine.diffSnapshots(prev, s, p, config.data.notify)) pushNotification(ev, p.id);
+        for (const ev of notifyEngine.diffSnapshots(prev, s, p, config.data.notify)) {
+          const n = pushNotification(ev, p.id);
+          if (ev.claim && n) { n.claimKey = ev.claim.key; if (upsertGiftClaim(p, ev.claim, n) === 'exists') n.read = true; }
+        }
         if (Array.isArray(s.models)) {
           for (const ev of notifyEngine.diffModels(state.data.models[p.id], s.models, p, config.data.notify)) pushNotification(ev, p.id);
           state.data.models[p.id] = s.models;
@@ -392,11 +446,34 @@ async function refreshAll({ force = false, reason = 'timer' } = {}) {
     }
     // 清理已删除/禁用的
     for (const id of Object.keys(state.data.snapshots)) if (!list.find((p) => p.id === id)) delete state.data.snapshots[id];
-    // RSS
-    if (wantModels && (config.data.notify.rssFeeds || []).length) {
-      const r = await news.checkFeeds(config.data.notify.rssFeeds, state.data.rssSeen, config.data.notify);
+    // 额度用完给出路提示：ZCode 端内重置机会 / Codex credits / 等自动重置
+    if (config.data.notify.stuckTips) {
+      for (const ev of gifts.scanStuckClaims(state.data.giftClaims || (state.data.giftClaims = []), { snapshots: state.data.snapshots, providers: list })) {
+        const n = { id: ev.claim.key.replace(/[^a-z0-9]/gi, '') + ':' + Date.now().toString(36), ts: Date.now(), kind: 'stuck', title: ev.title, body: ev.body, eventKey: ev.claim.key, link: null, providerId: ev.claim.providerId, claimKey: ev.claim.key, read: false };
+        state.data.notifications.unshift(n);
+        state.data.notifications = state.data.notifications.slice(0, 300);
+        ev.claim.notifId = n.id;
+        if (petReady) sendPet('notify', n); else pendingNotices.push(n);
+        sendSettings('notification', n);
+        state.saveSoon(); updateTrayMenu();
+      }
+    }
+    // Public news has its own cadence; quota snapshots remain the only source of actual account resets.
+    const newsFeeds = news.feedsFor(config.data.notify);
+    const newsDue = force || now - lastRssCheck >= Math.max(5, Number(config.data.notify.toolNewsIntervalMin) || 10) * 60000;
+    if (newsDue && newsFeeds.length) {
+      lastRssCheck = now;
+      const r = await news.checkFeeds(newsFeeds, state.data.rssSeen, config.data.notify);
       state.data.rssSeen = r.seen;
-      for (const ev of r.events) pushNotification(ev, null);
+      state.data.newsStatus = r.status;
+      for (const ev of r.events) {
+        // Tibo 额度动态附上自己账号的实时状态：预告≠你的额度变了，自己的接口才是真相
+        if (ev.accountHint) {
+          const line = news.accountStatusLine(state.data.snapshots, config.data.providers, ev.accountHint);
+          if (line) ev.body += '\n' + line;
+        }
+        pushNotification(ev, null);
+      }
     }
     state.saveSoon();
   } catch (e) { log('refresh error', e); }
@@ -465,7 +542,7 @@ function createPetWindow() {
   if (config.data.appearance.alwaysOnTop) petWin.setAlwaysOnTop(true, 'screen-saver');
   petWin.setOpacity(Math.max(0.25, Math.min(1, Number(config.data.appearance.opacity) || 1)));
   petWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-  // 置顶会被人家的 topmost 窗口顶掉（切全屏、别的置顶工具），隔几秒补一次，切走焦点也补
+  // 置顶会被别的 topmost 窗口顶掉，隔几秒补一次；失焦时不重排窗口，避免干扰应用激活。
   // 始终启动：运行中再打开「始终置顶」也生效，关着时回调里直接跳过
   const keepTop = setInterval(() => {
     if (!petWin || petWin.isDestroyed()) return clearInterval(keepTop);
@@ -473,9 +550,8 @@ function createPetWindow() {
     petWin.setAlwaysOnTop(true, 'screen-saver');
   }, 5000);
   petWin.on('closed', () => clearInterval(keepTop));
-  petWin.on('blur', () => { if (petWin && !petWin.isDestroyed() && config.data.appearance.alwaysOnTop) petWin.setAlwaysOnTop(true, 'screen-saver'); });
   petWin.loadFile(path.join(ROOT, 'src', 'renderer', 'pet.html'), { hash: flipped ? 'left' : '' });
-  petWin.once('ready-to-show', () => { petWin.show(); ensureOnScreen(); });
+  petWin.once('ready-to-show', () => { updatePetFullscreenVisibility(winsnap.foregroundWindow());applyPetVisibility();ensureOnScreen(); });
   petWin.webContents.on('console-message', (ev) => { const { level, message, lineNumber, sourceId } = ev; if (level !== 'info' && level !== 'debug' || process.env.AIPET_DEBUG) log('[renderer]', message, sourceId ? `(${path.basename(String(sourceId))}:${lineNumber})` : ''); });
   petWin.webContents.on('render-process-gone', (e, d) => log('renderer gone', d.reason));
   if (process.env.AIPET_DEBUG) setTimeout(async () => { try { const img = await petWin.webContents.capturePage(); fs.writeFileSync(path.join(ROOT, 'debug-pet.png'), img.toPNG()); log('debug capture saved', petWin.getBounds(), petBox); } catch (e) { log('capture failed', e.message); } }, 8000);
@@ -504,13 +580,13 @@ function ensureOnScreen() {
 }
 
 function openSettings(tab) {
-  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); if (tab) sendSettings('goto', tab); return; }
+  if (settingsWin && !settingsWin.isDestroyed()) { if(settingsWin.isMinimized())settingsWin.restore();settingsWin.show(); settingsWin.focus(); if (tab) sendSettings('goto', tab); return; }
   settingsWin = new BrowserWindow({
-    width: 960, height: 700, minWidth: 760, minHeight: 520, title: 'AI 桌宠 · 设置', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f6f7fb',
+    width: 960, height: 700, minWidth: 760, minHeight: 520, skipTaskbar:true, title: 'AI 桌宠 · 设置', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f6f7fb',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, spellcheck: false },
   });
   settingsWin.setMenu(null);
-  settingsWin.loadFile(path.join(ROOT, 'src', 'renderer', 'settings.html'), { hash: tab || 'providers' });
+  settingsWin.loadFile(path.join(ROOT, 'src', 'renderer', 'settings.html'), { hash: tab || 'tools' });
   settingsWin.on('closed', () => { settingsWin = null; });
   settingsWin.webContents.on('before-input-event', (e, input) => { if (input.key === 'F12' && input.type === 'keyDown') settingsWin.webContents.toggleDevTools(); });
   settingsWin.webContents.once('did-finish-load', () => pushData());
@@ -676,7 +752,7 @@ function buildMenuTemplate() {
     ...(!QUOTA_ONLY ? [
       { label: `🚀 打开 ${(launcher.resolve(currentCharacter || resolveCharacter(), launchCfg()) || {}).label || '对应工具'}`, click: () => launchCurrent() },
       { label: '🚀 打开其他…', submenu: launchTargets().map((t) => ({ label: t.spec.label, click: () => launchFor(t.id, t.spec) })) },
-      { label: '🔁 交接给别的 AI', submenu: handoffMenu() },
+      { label: '🔁 转接到其他工具…', click: () => openHandoffPicker() },
     ] : []),
     { type: 'separator' },
     { label: '🔄 刷新额度', click: () => refreshAll({ force: true, reason: 'menu' }) },
@@ -697,8 +773,8 @@ function buildMenuTemplate() {
     { label: '吸附到窗口', type: 'checkbox', checked: !!ap.snapWindows, enabled: winsnap.available(), click: (m) => setAppearance({ snapWindows: m.checked }) },
     { label: '开机自启', type: 'checkbox', checked: !!config.data.autostart, click: (m) => setAutostart(m.checked) },
     { type: 'separator' },
-    { label: '⚙️ 设置…', click: () => openSettings('providers') },
-    { label: petWin && petWin.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => { if (!petWin) return; petWin.isVisible() ? petWin.hide() : petWin.show(); updateTrayMenu(); } },
+    { label: '⚙️ 设置…', click: () => openSettings('tools') },
+    { label: petWin && petWin.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => { if (petWin) setPetVisible(!petWin.isVisible()); } },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ];
 }
@@ -713,7 +789,7 @@ function petMenuTemplate() {
     { type: 'separator' },
     ...all.slice(7, 9), // 摸头 / 消息
     ...all.filter((m) => m.label === '⚙️ 设置…'),
-    { label: '隐藏桌宠（托盘图标可唤回）', click: () => { if (petWin) { petWin.hide(); updateTrayMenu(); } } },
+    { label: '隐藏桌宠（托盘图标可唤回）', click: () => setPetVisible(false) },
   ];
 }
 function updateTrayMenu() { if (tray) tray.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate())); }
@@ -722,7 +798,7 @@ function createTray() {
     const img = nativeImage.createFromPath(path.join(ASSETS, 'app.ico'));
     tray = new Tray(img);
     tray.setToolTip('AI 桌宠');
-  tray.on('click', () => { if (petWin) { petWin.show(); sendPet('cmd', { name: 'bubble' }); } });
+  tray.on('click', () => { if (petWin) { setPetVisible(true);sendPet('cmd', { name: 'bubble' }); } });
   tray.on('double-click', () => openSettings('providers'));
     updateTrayMenu();
   } catch (e) { log('tray failed', e.message); }
@@ -743,7 +819,7 @@ let launchCache = null;
 async function launchFor(characterId, spec = null, opts = {}) {
   const r = await launcher.launch(characterId, spec ? { ...launchCfg(), [characterId]: spec } : launchCfg(), opts);
   if (r.ok) { recent = { character: characterId, at: Date.now(), reason: 'launch' }; pushData(); }
-  log('launch', characterId, r);
+  log('launch', characterId, JSON.stringify(r));
   if (!opts.handoff) sendPet('cmd', { name: 'say', seconds: r.ok ? 1.2 : 3, restoreInfo: true, lines: [{ t: r.ok ? (r.already ? '已经开着啦~' : '出发！') : '打不开...', s: 'P', c: r.ok ? '' : '#e0433f' }, { t: r.message, s: 'C', w: true }] });
   return r;
 }
@@ -780,19 +856,6 @@ function refreshSessions(kind, key, title) {
     sessionWorker.postMessage({ key, kind, dirs: transcriptDirs(kind), title });
   } catch (e) { sessionPending = ''; log('session scan failed', e.message); }
 }
-function sessionMenu(src, targets) {
-  const c = sessionsFor(src);
-  if (!c || c.list.length < 2) return [];
-  const { kind, list, auto } = c;
-  return [{
-    // 原生菜单点一下整条就关，所以会话下面直接挂目标工具：选会话 → 选工具一路走完，不再关掉重弹
-    label: `换个会话交接（默认${auto ? `《${auto}》` : '最近更新的'}）`,
-    submenu: list.map((s) => ({
-      label: `${s.current ? '● ' : ''}《${s.name}》${s.project ? ' · ' + s.project : ''}${s.fresh ? ' · ' + s.fresh : ''}`,
-      submenu: targets({ kind, file: s.file, name: s.name }),
-    })),
-  }];
-}
 // 一键看「哪些工具现在读得到」：读得到的才会用 DeepSeek 整理，读不到的会退回让原 AI 自己写
 function probeSources() {
   const rows = [['claude', 'Claude'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['workbuddy', 'WorkBuddy'], ['zcode', 'ZCode'], ['dsh', 'DSH']].map(([kind, label]) => {
@@ -823,29 +886,75 @@ function probeSources() {
   return rows;
 }
 function currentHandoffSource() { return lastAgentWin && winsnap.titledWindows().some((w) => w.hwnd === lastAgentWin.hwnd) ? lastAgentWin : null; }
-function handoffMenu(source) {
-  if (handoffJob) return [
-    { label: '查看交接进度', click: () => { lastSaid = ''; pushHandoff(); } },
-    { label: '复制当前指令', enabled: !!handoffJob.text, click: () => handoffAction({ action: 'copy', id: handoffJob.id }) },
-    { label: '⏹ 取消交接', click: () => handoffAction({ action: 'cancel', id: handoffJob.id }) },
-  ];
-  const last = handoff.latest();
-  const src = source === undefined ? currentHandoffSource() : source;
-  const readable = !!(src && handoffApi.KINDS[handoffSourceKey(src)]);
-  const d = last && new Date(last.at);
-  const tools = launchTargets();
-  const targets = (pin) => tools.map((t) => ({ label: `交给 ${t.spec.label}`, enabled: !!(src || last), click: () => runHandoff(t.id, t.spec, src, pin) }));
-  const when = d ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
-  return [
-    { label: src ? `从：${src.title.slice(0, 40)}${readable ? '' : '（读不到记录）'}` : '没找到正在用的 AI 窗口，只能接手最近的交接', enabled: false },
-    ...sessionMenu(src, targets),
-    { label: '检查可读来源…', click: () => probeSources() },
-    { type: 'separator' },
-    ...targets(null),
-    { type: 'separator' },
-    { label: last ? `最近：${path.basename(path.dirname(last.file))}（${when}）` : '还没有交接记录', enabled: false },
-    { label: '打开交接文件', enabled: !!last, click: () => shell.openPath(last.file) },
-  ];
+let transferDialog = null;
+function placeTransferMenu(height) {
+  const dialog=transferDialog;if(!dialog||dialog.win.isDestroyed()||!petWin||petWin.isDestroyed())return;
+  const pet=petRect(),area=screen.getDisplayMatching(pet).workArea;
+  const width=Math.min(300,area.width-16),requested=Math.max(100,Math.min(Number(height)||dialog.win.getBounds().height,440,area.height-16));
+  if(!dialog.anchor)dialog.anchor=require('../shared/transfer-flow').beside(pet,area,width,requested,8,dialog.openPoint);
+  const pos={x:Math.max(area.x+8,Math.min(dialog.anchor.x,area.x+area.width-width-8)),y:Math.max(area.y+8,Math.min(dialog.anchor.y,area.y+area.height-108))};
+  const h=Math.min(requested,area.y+area.height-pos.y-8);
+  const next={...pos,width,height:Math.ceil(h)},prev=dialog.win.getBounds();
+  if(Object.keys(next).some(k=>next[k]!==prev[k]))dialog.win.setBounds(next);
+  if(!dialog.win.isVisible()){dialog.win.show();dialog.win.focus();}
+}
+function openHandoffPicker(source) {
+  if (QUOTA_ONLY) return;
+  if (handoffJob) { lastSaid=''; pushHandoff(); return; }
+  if (transferDialog && !transferDialog.win.isDestroyed()) {placeTransferMenu();transferDialog.win.focus();return;}
+  closePanel();
+  const win = new BrowserWindow({width:300,height:380,frame:false,transparent:true,resizable:false,skipTaskbar:true,alwaysOnTop:true,show:false,hasShadow:false,parent:petWin,title:'AI 桌宠：工具转接',
+    webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:false,spellcheck:false}});
+  transferDialog={win,source:source===undefined?currentHandoffSource():source,targets:launchTargets(),allowedSessions:new Map(),openPoint:screen.getCursorScreenPoint(),anchor:null,workspaceProbe:null};
+  win.setMenu(null);win.setAlwaysOnTop(true,'screen-saver',1);win.loadFile(path.join(ROOT,'src','renderer','transfer.html'));
+  const fallback=setTimeout(()=>{if(transferDialog?.win===win&&!win.isVisible())placeTransferMenu(380);},800);
+  win.on('blur',()=>setTimeout(()=>{if(!win.isDestroyed()&&!win.isFocused())win.close();},140));
+  sendPet('cmd',{name:'menu-open',on:true});
+  win.on('closed',()=>{clearTimeout(fallback);if(transferDialog?.win===win)transferDialog=null;sendPet('cmd',{name:'menu-open',on:false});});
+}
+function transferAccess(e) {return transferDialog && !transferDialog.win.isDestroyed() && e.sender===transferDialog.win.webContents?transferDialog:null;}
+function registerTransferIpc() {
+ipcMain.on('transfer:size',(e,size)=>{if(transferAccess(e)&&Number.isFinite(size?.height))placeTransferMenu(size.height);});
+ipcMain.handle('transfer:data', e=>{
+  const dialog=transferAccess(e);if(!dialog)throw new Error('仅转接窗口可读取此信息');
+  const source=dialog.source, cache=sessionsFor(source);
+  for(const session of cache?.list||[]) dialog.allowedSessions.set(session.file,{kind:cache.kind,file:session.file,name:session.name});
+  const readable=!!(source&&handoffApi.KINDS[handoffSourceKey(source)]);
+  return {sourceLabel:source?.title||'',autoName:cache?.auto||'',readable,canSummarize:readable&&!!quipsKey(),loading:readable&&(!cache||!!sessionPending),hasFile:!!handoff.latest(),colors:(allCharacters().find(c=>c.id===currentCharacter)||CHARACTERS[0]).colors,
+    tools:dialog.targets.map((t,index)=>({index,label:t.spec.label,kindLabel:({'app':'桌面工具','store':'桌面工具','cli':'本机终端','wsl-cli':'WSL 终端','url':'浏览器入口'})[t.spec.kind]||t.spec.kind})),
+    sessions:(cache?.list||[]).map(s=>({file:s.file,name:s.name,project:s.project||'',fresh:s.fresh||''}))};
+});
+ipcMain.handle('transfer:workspace',(e,request)=>{
+  const dialog=transferAccess(e);if(!dialog)throw new Error('仅转接菜单可定位工作区');
+  dialog.workspaceProbe=null;
+  const pin=request?.session?dialog.allowedSessions.get(request.session):null;
+  if(request?.session&&!pin)return {project:'',delegated:true};
+  const kind=dialog.source&&handoffApi.KINDS[handoffSourceKey(dialog.source)];
+  if(!kind)return {project:'',delegated:true};
+  const pointer=handoffApi.sessionPointer(kind,transcriptDirs(kind),dialog.source.title,pin?.file);
+  if(!pointer)return {project:'',delegated:true};
+  const key=handoffApi.referenceKey(pointer.ref),remembered=(state.data.handoffWorkspaces||[]).find(r=>(r.key||handoffApi.referenceKey(r.ref))===key);
+  let project=pointer.project;
+  if(!project&&remembered){try{if(fs.statSync(remembered.project).isDirectory())project=remembered.project;}catch(_){}}
+  dialog.workspaceProbe={selection:request?.session||null,pin:{kind,file:pointer.ref,name:pointer.title||pin?.name||''}};
+  return {project:project||'',delegated:!project,name:pointer.title||pin?.name||''};
+});
+ipcMain.handle('transfer:start',(e,request)=>{
+  const dialog=transferAccess(e);if(!dialog)throw new Error('仅转接窗口可启动接手');
+  if(QUOTA_ONLY||handoffJob)return {ok:false,error:'当前不可开始新的转接'};
+  const target=Number.isInteger(request?.target)?dialog.targets[request.target]:null;
+  if(!target||!['direct','summary','file'].includes(request.mode))return {ok:false,error:'请选择目标工具和接手方式'};
+  const pin=request.session?dialog.allowedSessions.get(request.session):(dialog.workspaceProbe?.selection===null?dialog.workspaceProbe.pin:null);
+  if(request.session&&!pin)return {ok:false,error:'来源会话已失效，请重新选择'};
+  const readable=!!(dialog.source&&handoffApi.KINDS[handoffSourceKey(dialog.source)]);
+  if(request.mode==='direct'&&!readable)return {ok:false,error:'当前来源没有可读会话，请先使用来源工具'};
+  if(request.mode==='summary'&&(!readable||!quipsKey()))return {ok:false,error:'DS 总结需要可读来源和 DeepSeek Key'};
+  if(request.mode==='file'&&!handoff.latest())return {ok:false,error:'没有可用的交接文件'};
+  setImmediate(()=>runHandoff(target.id,target.spec,request.mode==='file'?null:dialog.source,pin,{direct:request.mode==='direct',summaryOnly:request.mode==='summary'}));
+  return {ok:true};
+});
+ipcMain.on('transfer:close',e=>{const dialog=transferAccess(e);if(dialog)dialog.win.close();});
+ipcMain.on('transfer:open',e=>{if(e.sender===petWin?.webContents||e.sender===panelWin?.webContents||e.sender===settingsWin?.webContents)openHandoffPicker();});
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms, job, step = 1000) {
@@ -873,7 +982,7 @@ function pushHandoff(j = handoffJob) {
   const cur = j.steps[i];
   // 标题进左上角小云朵，大气泡写“第几步”和细节；结束后写结论
   const failed = !!j.error || j.steps.some((x) => x.s === 'fail');
-  const headings = [j.viaApi ? '读对话记录' : '请原 AI 写交接', j.viaApi ? 'DeepSeek 整理中' : '等 AI 整理好', '正在打开工具', j.cli ? '正在发送指令' : j.fillingDraft ? '正在填入指令' : '正在复制指令'];
+  const headings = j.direct ? ['认来源会话', '定位工作区', '正在打开工具', j.cli ? '正在发送指令' : '正在复制指令'] : [j.viaApi ? '读对话记录' : '请原 AI 写交接', j.viaApi ? 'DeepSeek 整理中' : '等 AI 整理好', '正在打开工具', j.cli ? '正在发送指令' : j.fillingDraft ? '正在填入指令' : '正在复制指令'];
   // 还没走成任何一步、又已经知道退回了老流程时，先说清楚原因
   const beforeAnyOk = !j.steps.some((x) => x.s === 'ok');
   const heading = j.received ? '新 AI 已接手' : j.done ? (j.cancelled ? '交接已停止' : failed ? '还差一步' : j.returning ? (j.cli ? '原会话继续中' : j.prefilled ? '在 Codex 确认发送' : '已请求返回原会话') : j.cli ? '接手指令已发送' : j.prefilled ? `在 ${j.prefillLabel || 'Codex'} 确认发送` : '到新对话粘贴') : (j.fallback && beforeAnyOk ? '退回原流程' : headings[Math.max(0, i)]);
@@ -930,8 +1039,8 @@ function transcriptDirs(kind) {
   if (kind === 'codex') return [codexHome()];
   if (kind === 'cursor') return [cursorDbPath() || cursorModel.DEFAULT_DB];
   if (kind === 'dsh') return [process.env.DSH_HOME || path.join(app.getPath('home'), '.dsh')];
-  if (kind === 'workbuddy') return [process.env.WORKBUDDY_HOME || path.join(app.getPath('home'), '.workbuddy')];
-  if (kind === 'zcode') return [process.env.ZCODE_HOME || path.join(app.getPath('home'), '.zcode')];
+  if (kind === 'workbuddy') return [agents().find(a=>a.id==='workbuddy')?.sessionHome || process.env.WORKBUDDY_HOME || path.join(app.getPath('home'), '.workbuddy')];
+  if (kind === 'zcode') return [(config.data.activity || {}).zcodeDir || process.env.ZCODE_HOME || path.join(app.getPath('home'), '.zcode')];
   return activity.detectClaudeDirs(config.data.activity || {});
 }
 // 桌面目标没法知道用户何时发送：盯新 AI 的对话记录，接手指令出现了就说一声并收起；读不到记录的工具照旧定时收起
@@ -958,14 +1067,16 @@ function watchReceived(job, targetId, spec) {
 }
 
 // 一键交接：让来源 AI 写 HANDOFF → 等 latest.txt 更新 → 在项目目录打开目标工具 → 粘贴接手指令
-async function runHandoff(targetId, spec, src, pin) {
+async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnly = false } = {}) {
   if (QUOTA_ONLY) return;
   if (handoffJob) { lastSaid = ''; pushHandoff(); return; }
   // 只有终端能可靠地自动粘贴；桌面应用唤出后焦点常不在输入框，打开好工作区后由用户粘贴
   const cli = /cli$/.test(spec.kind);
-  const job = handoffJob = { id: ++handoffSerial, target: spec.label, cli, workspace: launcher.supportsWorkspace(spec), cancelled: false, done: false, sent: false, text: src ? handoff.writePrompt(handoffSourceKey(src)) : '', note: '',
-    title: `交接 → ${spec.label}`,
-    steps: [{ t: '让 AI 写交接', s: src ? 'wait' : 'skip' }, { t: '等交接文件', s: src ? 'wait' : 'skip' }, { t: cli ? '启动目标终端' : '打开目标工具', s: 'wait' }, { t: cli ? '发送接手指令' : '指令放进剪贴板', s: 'wait' }] };
+  const job = handoffJob = { id: ++handoffSerial, target: spec.label, cli, direct, workspace: launcher.supportsWorkspace(spec), cancelled: false, done: false, sent: false, text: src && !direct ? handoff.writePrompt(handoffSourceKey(src)) : '', note: '',
+    title: direct ? `直接接手 → ${spec.label}` : summaryOnly ? `DS 总结后接手 → ${spec.label}` : `交接 → ${spec.label}`,
+    steps: direct
+      ? [{ t: '认来源会话', s: 'wait' }, { t: '定位工作区', s: 'wait' }, { t: cli ? '启动目标终端' : '打开目标工具', s: 'wait' }, { t: cli ? '发送接手指令' : '指令放进剪贴板', s: 'wait' }]
+      : [{ t: '让 AI 写交接', s: src ? 'wait' : 'skip' }, { t: '等交接文件', s: src ? 'wait' : 'skip' }, { t: cli ? '启动目标终端' : '打开目标工具', s: 'wait' }, { t: cli ? '发送接手指令' : '指令放进剪贴板', s: 'wait' }] };
   pushHandoff(); updateTrayMenu(); escToCancel(true);
   const sourceId = src && handoffSourceKey(src);
   const sourceSession = file => {
@@ -974,7 +1085,46 @@ async function runHandoff(targetId, spec, src, pin) {
     catch (_) { return null; }
   };
   if (pin && pin.kind === handoffApi.KINDS[sourceId]) job.routeSource = sourceSession(pin.file);
+  let ws = '', returnSession = null;
   try {
+    if (summaryOnly && (!src || !quipsKey() || !handoffApi.KINDS[handoffSourceKey(src)])) { jobStep(job, 0, 'fail', 'DS 总结需要可读的来源会话和 DeepSeek Key；可改用直接接手'); return; }
+    if (direct) {
+      // 直接转接：不整理、不写文件，只把「来源会话指针」交给目标 AI，由它自己读记录开工
+      const srcKind = src && handoffApi.KINDS[handoffSourceKey(src)];
+      if (!src || !srcKind) { jobStep(job, 0, 'fail', src ? '这个来源读不到会话记录，请改用普通交接' : '没找到正在用的 AI 窗口，请先用普通交接'); return; }
+      jobStep(job, 0, 'run');
+      const p = handoffApi.sessionPointer(srcKind, transcriptDirs(srcKind), src.title, pin && pin.kind === srcKind ? pin.file : undefined);
+      if (!p || !p.ref) { jobStep(job, 0, 'fail', '没找到来源会话记录'); return; }
+      job.routeSource = sourceSession(p.ref);
+      if (job.routeSource && p.project) job.routeSource.projectRoot = p.project;
+      jobStep(job, 0, 'ok');
+      jobStep(job, 1, 'run');
+      const isDirectory = value => { try { return !!value && fs.statSync(value).isDirectory(); } catch (_) { return false; } };
+      const sourceKey = handoffApi.referenceKey ? handoffApi.referenceKey(p.ref) : p.ref;
+      const remembered = (state.data.handoffWorkspaces || []).find(row => (row.key || (handoffApi.referenceKey?handoffApi.referenceKey(row.ref):row.ref)) === sourceKey);
+      ws = isDirectory(p.project) ? p.project : isDirectory(remembered?.project) ? remembered.project : '';
+      job.routeWorkspace = ws;
+      if (job.routeSource && ws) job.routeSource.projectRoot = ws;
+      if(ws) {
+        state.data.handoffWorkspaces = [{ref:p.ref,key:sourceKey,project:ws}, ...(state.data.handoffWorkspaces || []).filter(row=>(row.key || (handoffApi.referenceKey?handoffApi.referenceKey(row.ref):row.ref))!==sourceKey)].slice(0,80);
+        state.saveSoon();
+      }
+      log('direct workspace',srcKind,ws||'(locate in receiving AI)',sourceKey);
+      let ref = p.ref;
+      if (spec.kind === 'wsl-cli') {
+        const m = /^(zcode|cursor):(.+)#([^#]+)$/.exec(ref);
+        ref = m ? `${m[1]}:${handoff.toWslPath(m[2])}#${m[3]}` : handoff.toWslPath(ref);
+      }
+      job.handoffPath = ref;
+      let reader = app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'main', 'session-reader.js') : path.join(__dirname, 'session-reader.js');
+      if (spec.kind === 'wsl-cli') reader = handoff.toWslPath(reader);
+      job.text = handoff.takeoverPrompt(null, { project: path.basename(ws), tool: targetId, from: ref, reader, locateWorkspace:!ws });
+      job.steps[1].d = ws ? path.basename(ws) : '接手 AI 自动定位，不要求选目录';
+      job.project = launcher.supportsWorkspace(spec) ? path.basename(ws) : '';
+      returnSession = ws ? handoffReturn.find(state.data.handoffReturns, ws, targetId, sourceId, spec) : null;
+      jobStep(job, 1, 'ok', '');
+    }
+    if (!direct) {
     const lastHandoff = handoff.latest();
     let file = lastHandoff && lastHandoff.file;
     // 没找到来源窗口时用的是「上一次交接」的文件——把是哪个项目说出来，别让人以为是自己这个项目
@@ -1032,6 +1182,7 @@ async function runHandoff(targetId, spec, src, pin) {
         if (job.cancelled) return;
         if (e.code === 'SOURCE_SELECTION_REQUIRED') { jobStep(job, 0, 'fail', e.message); return; }
         log('handoff api failed', e.message);
+        if (summaryOnly) { jobStep(job, 1, 'fail', 'DS 总结失败：' + String(e.message || '调用失败').split('\n')[0].slice(0,100) + '；可改用直接接手'); return; }
         job.fallback = String(e.message || '调用失败').split('\n')[0].slice(0, 60);
         job.steps[0] = { t: '让 AI 写交接', s: 'wait', d: 'API 没成功，改让 AI 写' }; job.steps[1] = { t: '等交接文件', s: 'wait' };
         pushHandoff();
@@ -1059,7 +1210,7 @@ async function runHandoff(targetId, spec, src, pin) {
       file = done.file; job.manualSource = false; job.steps[0].s = 'ok'; job.steps[1].d = path.basename(path.dirname(file)); jobStep(job, 1, 'ok', '');
     }
     if (!file) { jobStep(job, 2, 'fail', '没有交接文件'); return; }
-    let ws = handoff.workspaceOf ? handoff.workspaceOf(file) : path.dirname(file);
+    ws = handoff.workspaceOf ? handoff.workspaceOf(file) : path.dirname(file);
     if (!ws) {
       const picked = await dialog.showOpenDialog(petWin, { title: '未识别项目目录，请选择本次交接的实际工作区', properties: ['openDirectory'] });
       if (job.cancelled || picked.canceled || !picked.filePaths?.[0]) { jobStep(job, 2, 'fail', '未选择实际工作区，已停止转接'); return; }
@@ -1067,7 +1218,7 @@ async function runHandoff(targetId, spec, src, pin) {
       file = handoff.placeInWorkspace(file, ws);
     }
     job.routeWorkspace = ws;
-    const returnSession = handoffReturn.find(state.data.handoffReturns, ws, targetId, sourceId, spec);
+    returnSession = handoffReturn.find(state.data.handoffReturns, ws, targetId, sourceId, spec);
     job.project = launcher.supportsWorkspace(spec) ? path.basename(ws) : '';
     // 指令只写技能命令 + 任务名，具体读哪个文件由 takeover 技能自己找（见 skills/takeover/SKILL.md）
     const shown = (f, base) => {
@@ -1078,15 +1229,16 @@ async function runHandoff(targetId, spec, src, pin) {
     job.text = handoff.takeoverPrompt(job.handoffPath, { project: path.basename(ws), goal: handoff.goalOf ? handoff.goalOf(file) : '', session: job.sourceName, tool: targetId });
     // 回原会话时 AI 的工作目录是那个会话自己的目录（桌面版按线程，CLI 按项目目录），相对路径按它算
     if (returnSession) { job.text = handoffReturn.prompt(shown(file, job.cli ? ws : (returnSession.cwd || ws)), { project: path.basename(ws), goal: handoff.goalOf ? handoff.goalOf(file) : '', session: job.sourceName, tool: targetId }); job.returning = true; }
+    }
     await clipboard.writeText(job.text);
     if (job.cancelled) return;
-    job.steps[2].d = launcher.supportsWorkspace(spec) ? `工作区 ${path.basename(ws)}` : '不支持指定工作区';
+    job.steps[2].d = launcher.supportsWorkspace(spec) ? (ws ? `工作区 ${path.basename(ws)}` : '由接手 AI 从来源记录定位工作区') : '不支持指定工作区';
     jobStep(job, 2, 'run');
     if (!cli) {
-      let r = await launchFor(targetId, spec, { cwd: ws, prompt: job.text, session: returnSession, handoff: true });
+      let r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, prompt: job.text, session: returnSession, handoff: true });
       if (!r.ok && returnSession && !job.cancelled) {
         job.returning = false;
-        job.text = handoff.takeoverPrompt(job.handoffPath, { project: path.basename(ws), tool: targetId });
+        if (!direct) job.text = handoff.takeoverPrompt(job.handoffPath, { project: path.basename(ws), tool: targetId });
         await clipboard.writeText(job.text);
         if (job.cancelled) return;
         r = await launchFor(targetId, spec, { cwd: ws, prompt: job.text, handoff: true });
@@ -1114,7 +1266,7 @@ async function runHandoff(targetId, spec, src, pin) {
     const existing = new Set(winsnap.titledWindows().map((w) => w.hwnd));
     const routed = (w) => { const c = activity.routeForWindow(w, config.data.activity, config.data.providers, agents()); return c && (charOf(c) || c) === targetId; };
     const findTarget = () => winsnap.titledWindows().find((w) => routed(w) && w.hwnd !== (src && src.hwnd) && w.hwnd !== ownHwnd() && !existing.has(w.hwnd));
-    const r = await launchFor(targetId, spec, { cwd: ws, session: returnSession, handoff: true });
+    const r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, session: returnSession, handoff: true });
     if (job.cancelled) return;
     if (!r.ok) { jobStep(job, 2, 'fail', r.message || '终端没打开，指令在剪贴板'); return; }
     const win = await waitFor(findTarget, 60000, job);
@@ -1242,6 +1394,7 @@ ipcMain.on('context-menu', (_e, pt) => {
   }
   ready.popup({ window: petWin, ...at });
 });
+registerTransferIpc();
 ipcMain.on('handoff:action', (e, action) => { if (petWin && e.sender === petWin.webContents) handoffAction(action); });
 ipcMain.on('panel:toggle', () => togglePanel());
 ipcMain.on('panel:close', () => closePanel());
@@ -1252,6 +1405,43 @@ ipcMain.on('open-settings', (e, tab) => openSettings(tab));
 ipcMain.on('launch', (e, id) => (QUOTA_ONLY ? openSettings('providers') : id ? launchFor(id) : launchCurrent()));
 ipcMain.handle('agents:presets', async () => { await launcher.discover(AGENT_PRESETS); return AGENT_PRESETS.map((a) => ({ ...a, installed: launcher.agentSpec(a).kind === 'app' })); });
 ipcMain.handle('launch:defaults', async () => { await launcher.discover(agents()); return { ...launcher.defaults(), ...agentLaunch() }; });
+ipcMain.handle('environment:scan', async (e, draft) => {
+  if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) throw new Error('仅设置窗口可检查本机环境');
+  const next = draft && typeof draft === 'object' ? deepMerge(config.data, draft) : config.data;
+  const definitions = require('./tool-registry').definitions(next);
+  await launcher.discover(definitions.map(t => t.agent || t.preset).filter(Boolean), { force: true });
+  launchCache = null;
+  const specs = { ...launcher.defaults(), ...Object.fromEntries(definitions.filter(t=>t.agent||t.preset).map(t=>[t.id,launcher.agentSpec(t.agent||t.preset)])) };
+  for (const [id, override] of Object.entries(next.launch || {})) if (override?.kind) specs[id] = launcher.resolve(id, next.launch);
+  return require('./tool-registry').inspect(next, specs, { available: launcher.localAvailable, modelInfo: (id,a)=>agentModel.info(id,a), cursorInfo:()=>cursorModel.info((next.providers||[]).find(p=>p.type==='cursor')?.dbPath) });
+});
+ipcMain.handle('takeover:inspect', (e, ref) => {
+  if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) throw new Error('仅设置窗口可校验接手来源');
+  try {
+    const r = require('./session-reader').readSession(ref);
+    return {ok:true,ref:r.ref,kind:r.kind,project:handoffApi.sessionWorkspace(r),title:r.title,messages:r.messages.length,truncated:r.truncated,repaired:r.repaired};
+  } catch(err) { return {ok:false,error:err.message}; }
+});
+// 「帮我找」：等一次本机扫描结束后按内置规则定位工具；用户填了自定义入口时不覆盖，只返回检测结果
+ipcMain.handle('launch:find', async (e, id) => {
+  await launcher.discover(agents(), { force: true });
+  launchCache = null;
+  const a = agents().find((x) => x.id === id);
+  const spec = launcher.resolve(id, {}) || (a ? launcher.agentSpec(a) : null);
+  return spec && (spec.target || spec.command) ? spec : null;
+});
+// WSL 发行版列表（wsl -l -q，输出可能是 UTF-16），缓存 5 分钟
+let wslDistroCache = { at: 0, list: [] };
+ipcMain.handle('wsl:distros', async () => {
+  if (Date.now() - wslDistroCache.at < 5 * 60000) return wslDistroCache.list;
+  const list = await new Promise((resolve) => {
+    require('child_process').execFile('wsl.exe', ['-l', '-q'], { windowsHide: true, timeout: 8000 }, (e, out) => {
+      resolve(e ? [] : require('../shared/launch').parseWslList(String(out)));
+    });
+  });
+  wslDistroCache = { at: Date.now(), list };
+  return list;
+});
 ipcMain.handle('quips:generate', () => refreshQuips({ force: true }));
 ipcMain.handle('quips:state', () => ({ updatedAt: (state.data.quips || {}).updatedAt || 0, lastError: (state.data.quips || {}).lastError || null, counts: Object.fromEntries(Object.entries((state.data.quips || {}).byCharacter || {}).map(([k, v]) => [k, v.length])), hasKey: !!quipsKey() }));
 ipcMain.on('open-external', (e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
@@ -1261,6 +1451,14 @@ ipcMain.on('appearance:set', (e, patch) => setAppearance(patch || {}));
 ipcMain.on('notifications:read', () => { state.data.notifications.forEach((n) => { n.read = true; }); state.saveSoon(); updateTrayMenu(); pushData(); });
 ipcMain.on('notification:read', (e, id) => { const n = state.data.notifications.find((x) => x.id === id); if (n) { n.read = true; state.saveSoon(); updateTrayMenu(); } });
 ipcMain.on('notifications:clear', () => { state.data.notifications = []; state.saveSoon(); updateTrayMenu(); pushData(); });
+ipcMain.on('gift:claim', (e, key) => {
+  const c = gifts.claimGift(state.data.giftClaims || (state.data.giftClaims = []), key);
+  if (!c) return;
+  const rec = state.data.notifications.find((x) => x.id === c.notifId);
+  if (rec) rec.read = true;
+  state.saveSoon(); updateTrayMenu(); pushData();
+  sendPet('cmd', { name: 'say', seconds: 2.5, restoreInfo: true, lines: [null, { t: '好耶，已领取！', s: 'P' }, { t: '记得把赠送额度用掉~', s: 'C' }] });
+});
 ipcMain.on('resnap', () => settle());
 ipcMain.on('pet:recover', () => {
   if (!petWin) return;
@@ -1269,7 +1467,7 @@ ipcMain.on('pet:recover', () => {
   config.data.layout.snapped = { h: 'right', v: 'bottom' };
   movePet(wa.x + wa.width - petBox.x - petBox.w, wa.y + wa.height - petBox.y - petBox.h);
   flipped = false; sendPet('snap', { flip: false });
-  petWin.showInactive();
+  setPetVisible(true);
   setTimeout(() => { ensureOnScreen(); const b = petWin.getBounds(); Object.assign(config.data.layout, { x: b.x, y: b.y, flipped: false }); config.saveSoon(); }, 250);
 });
 ipcMain.handle('config:get', () => config.data);
@@ -1282,6 +1480,7 @@ ipcMain.handle('config:set', (e, next) => {
   if (!config.save()) throw new Error('设置未能写入，请检查本机文件是否可写');
   if (next.autostart !== undefined) setAutostart(next.autostart);
   if (next.refresh) scheduleRefresh();
+  if (next.features) { QUOTA_ONLY = config.data.features?.handoff === false; updateTrayMenu(); }
   if (next.agents) { updateTrayMenu(); launcher.discover(agents()); }
   if (next.providers) refreshAll({ force: true, reason: 'config' });
   else pushData();
@@ -1292,13 +1491,18 @@ ipcMain.handle('importers:scan', async () => importers.scan());
 ipcMain.handle('meta', () => ({ types: providers.TYPE_META, characters: allCharacters(), characterImages: characterImages(), userData, root: ROOT, quotaOnly: QUOTA_ONLY, snapAvailable: winsnap.available(), version: app.getVersion(), electron: process.versions.electron }));
 ipcMain.handle('state:get', () => state.data);
 ipcMain.handle('notifications:list', () => state.data.notifications);
+ipcMain.handle('news:check', async (e, cfg) => {
+  if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) return null;
+  const r = await news.checkFeeds(news.feedsFor(cfg || config.data.notify), {}, {});
+  return r.status; // Test only: no notifications and no mutation of the saved baseline.
+});
 ipcMain.handle('pick-file', async () => { const r = await dialog.showOpenDialog({ properties: ['openFile', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('pick-directory', async () => { const r = await dialog.showOpenDialog({ properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('pick-dir', async () => { const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('activity:now', () => { checkActivity(); return lastActivity; });
 
 // ---------- 生命周期 ----------
-app.on('second-instance', () => { if (petWin) { petWin.show(); sendPet('cmd', { name: 'bubble' }); } });
+app.on('second-instance', () => { if (petWin) { setPetVisible(true); sendPet('cmd', { name: 'bubble' }); } });
 app.on('window-all-closed', (e) => { /* 托盘常驻 */ });
 app.on('before-quit', () => { quitting = true; closePanel(); config.save(); state.save(); });
 
@@ -1321,6 +1525,7 @@ app.whenReady().then(() => {
   activityTimer = setInterval(checkActivity, 10000);
   setInterval(() => { updateScreenAreas(); checkWindows(); }, 1000); checkWindows();
   setInterval(checkQuotaResets, 15000);
+  setInterval(checkGiftReminders, 60000);
   if (!QUOTA_ONLY) { setTimeout(() => refreshQuips(), 20000); setInterval(() => refreshQuips(), 10 * 60000); }
   powerMonitor.on('resume', () => setTimeout(() => refreshAll({ force: true, reason: 'resume' }), 5000));
   screen.on('display-metrics-changed', () => setTimeout(() => { updateScreenAreas(); ensureOnScreen(); }, 500));
@@ -1328,7 +1533,7 @@ app.whenReady().then(() => {
   if (app.isPackaged && fs.existsSync(startupLnk())) { try { fs.unlinkSync(startupLnk()); } catch (_) { /* 删不掉就沿用旧的 */ } setAutostart(true); }
   else { config.data.autostart = fs.existsSync(startupLnk()); updateTrayMenu(); }
   if (!app.isPackaged && process.env.AIPET_DEBUG_SCRIPT) {
-    try { require(process.env.AIPET_DEBUG_SCRIPT)({ app, petWin: () => petWin, settingsWin: () => settingsWin, setAppearance, refreshAll, sendPet, checkWindows, currentSelection: characterSelection, openSettings, settle, log, ROOT, emit: (ch, payload) => ipcMain.emit(ch, {}, payload), petBox: () => petBox, refreshQuips, shot: async (file, x, y, w, h) => { const { desktopCapturer } = require('electron'); const d = screen.getPrimaryDisplay(); const sf = d.scaleFactor; const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(d.size.width * sf), height: Math.round(d.size.height * sf) } }); const src = srcs.find((s) => String(s.display_id) === String(d.id)) || srcs[0]; const img = src.thumbnail.crop({ x: Math.round(x * sf), y: Math.round(y * sf), width: Math.round(w * sf), height: Math.round(h * sf) }); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('shot', file); }, capture: async (win, file) => { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('captured', file, win.getBounds()); } }); } catch (e) { log('debug script failed', e); }
+    try { require(process.env.AIPET_DEBUG_SCRIPT)({ app, petWin: () => petWin, settingsWin: () => settingsWin, setAppearance, refreshAll, sendPet, checkWindows, currentSelection: characterSelection, openSettings, openHandoffPicker, updatePetFullscreenVisibility, setPetVisible, settle, log, ROOT, emit: (ch, payload) => ipcMain.emit(ch, {}, payload), petBox: () => petBox, refreshQuips, shot: async (file, x, y, w, h) => { const { desktopCapturer } = require('electron'); const d = screen.getPrimaryDisplay(); const sf = d.scaleFactor; const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(d.size.width * sf), height: Math.round(d.size.height * sf) } }); const src = srcs.find((s) => String(s.display_id) === String(d.id)) || srcs[0]; const img = src.thumbnail.crop({ x: Math.round(x * sf), y: Math.round(y * sf), width: Math.round(w * sf), height: Math.round(h * sf) }); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('shot', file); }, capture: async (win, file) => { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(ROOT, file), img.toPNG()); log('captured', file, win.getBounds()); } }); } catch (e) { log('debug script failed', e); }
   }
   if (process.argv.includes('--smoke-test') && dataDirArg) {
     require('./smoke-test')({ app, petWin: () => petWin, settingsWin: () => settingsWin, setAppearance, config, state, pushData, userData, ROOT, CHARACTERS, winsnap });

@@ -9,11 +9,18 @@ html, body { margin: 0; background: transparent; font-family: "Microsoft YaHei U
 .panel { position: absolute; left: 6px; right: 6px; top: 6px; max-height: calc(100vh - 12px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hint) transparent; background: rgba(255,255,255,.97); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.18); animation: pop .2s cubic-bezier(.34,1.56,.64,1); }
 @keyframes pop { from { transform: scale(.94) translateY(-4px); opacity: 0 } to { transform: none; opacity: 1 } }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } }
-.info { display: grid; gap: 2px; margin: 0 -4px 8px; padding: 6px 8px; border-radius: 8px; background: var(--soft); }
+.info { display: grid; gap: 2px; margin: 0 -4px 8px; padding: 6px 8px; border-radius: 8px; background: var(--soft); overflow: hidden; }
 .why { font-size: 11px; color: var(--text); margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
-.info .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin: 2px 0; }
-.info .k { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .info .v { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.info .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin: 2px 0; min-width: 0; }
+.info .k { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info .v { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 0; display: flex; align-items: baseline; gap: 4px; }
+/* 数值列里带的提示（剩 N / 重置倒计时）先收缩截断，主数值保持完整 */
+.info .v .k { flex: 0 1 auto; min-width: 0; }
+.info .v.err { color: #d93d3a; font-weight: 500; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .info .v.stale { color: var(--hint); }
 .info .v.err { color: #d93d3a; font-weight: 500; } .info .v.stale { color: var(--hint); }
+.info .row.claim { cursor: pointer; padding: 3px 6px; margin: 2px -6px; border-radius: 6px; background: color-mix(in srgb, #e8a13d 16%, white); }
+.info .row.claim:hover { background: color-mix(in srgb, #e8a13d 28%, white); }
+.info .row.claim .v { color: #b06f10; }
 .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; white-space: nowrap; }
 .row label { width: 30px; color: var(--text); }
 .row input[type=range] { flex: 1; min-width: 0; accent-color: var(--line); }
@@ -28,6 +35,7 @@ input[type=checkbox] { accent-color: var(--line); margin: 0; }
 .btns button:hover { background: var(--soft); }
 .btns button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
 .btns #launch-btn { flex: 1 0 100%; background: var(--line); border-color: var(--line); color: #fff; font-weight: 700; }
+.btns #transfer-btn { flex: 1 0 100%; }
 .btns #launch-btn:hover { background: color-mix(in srgb, var(--line) 85%, black); }
 .btns button.quit { color: #d93d3a; flex: 0 0 auto; border-color: transparent; }
 .btns button.quit:hover { background: #fdecec; }
@@ -45,7 +53,8 @@ input[type=checkbox] { accent-color: var(--line); margin: 0; }
     <label><input type="checkbox" data-cfg="snapWindows"> 吸附窗口</label>
     <label><input type="checkbox" data-cfg="alwaysOnTop"> 置顶</label>
   </div>
-  <div class="btns"><button data-act="launch" id="launch-btn">打开工具</button><button data-act="refresh">刷新</button><button data-act="settings">设置</button><button data-act="quit" class="quit">退出</button></div>
+  <div class="btns"><button data-act="launch" id="launch-btn">打开工具</button>
+  <button id="transfer-btn" data-act="transfer">转接到其他工具</button><button data-act="refresh">刷新</button><button data-act="settings">设置</button><button data-act="quit" class="quit">退出</button></div>
 </div>
 <script src="../shared/usage.js"></script>
 <script src="panel.js"></script></body></html>

@@ -34,6 +34,7 @@ function defaultConfig() {
       volume: 0.6,
       peakMode: 'default',        // default | liang | strong | off
       alwaysOnTop: true,
+      showOverFullscreen: true,   // 其他应用全屏时仍显示；关闭后仅在桌宠所在屏幕临时隐藏
       snapScreen: true,
       snapWindows: true,
       fullAmountCNY: 100,         // 余额多少算“吃饱”（影响体型）
@@ -43,17 +44,23 @@ function defaultConfig() {
     },
     refresh: { intervalSec: 300, newsIntervalMin: 60 },
     providers: [
+      { id: 'cursor', type: 'cursor', name: 'Cursor / Grok Bot', enabled: false, warnPercent: 90, character: 'grok' },
       { id: 'deepseek', type: 'deepseek', name: 'DeepSeek', enabled: false, apiKey: '', lowBalance: 5, character: 'deepseek' },
       { id: 'codex', type: 'codex', name: 'Codex / ChatGPT', enabled: false, authPath: path.join(WIN_HOME, '.codex', 'auth.json'), codexHome: path.join(WIN_HOME, '.codex'), warnPercent: 90, character: 'codex' },
       { id: 'relay', type: 'newapi', name: '中转站', enabled: false, baseUrl: '', apiKey: '', accessToken: '', userId: '', lowBalance: 1, character: 'claude', announcements: true },
-      { id: 'zhipu', type: 'zhipu', name: 'GLM Coding Plan', enabled: false, baseUrl: 'https://open.bigmodel.cn', apiKey: '', warnPercent: 90, character: 'zcode' },
+      { id: 'zhipu', type: 'zhipu', name: '智谱 GLM / Z.ai Coding Plan', enabled: false, baseUrl: 'https://api.z.ai', apiKey: '', warnPercent: 90, character: 'zcode' },
       { id: 'claude-oauth', type: 'claude-oauth', name: 'Claude 订阅', enabled: false, credentialsPath: path.join(WIN_HOME, '.claude', '.credentials.json'), warnPercent: 90, character: 'claude' },
       { id: 'gemini', type: 'gemini', name: 'Gemini CLI', enabled: false, baseUrl: '', apiKey: '', accessToken: '', userId: '', credentialsPath: path.join(WIN_HOME, '.gemini', 'oauth_creds.json'), project: '', auth: 'auto', warnPercent: 90, character: 'gemini' },
       { id: 'kimi', type: 'kimi', name: 'Kimi', enabled: false, agentDir: '', warnPercent: 90, character: 'kimi' },
     ],
+    providersSeen: [],         // 合入过配置的内置服务商 id；新版本新增项据此补进老配置，删除过的不会复活
+    features: { handoff: true }, // 安装时可选装的功能；工具转接关闭 = 额度纯享（原 B 版）行为
     notify: {
       toast: false, bubble: true, sound: false,
       resets: true, gifts: true, newModels: true, lowBalance: true, announcements: false, rss: false,
+      toolNews: false, toolNewsIntervalMin: 10,
+      giftRemindMin: 30,        // 送额度待领取的重复提醒间隔（分钟，0 = 只提醒一次）
+      stuckTips: true,          // 额度用完时提示出路（ZCode 重置机会 / Codex credits / 等自动重置）
       quietHours: '',            // 例如 "23:00-08:00"
       rssFeeds: [],              // { name, url, enabled }
     },
@@ -64,6 +71,7 @@ function defaultConfig() {
       claudeDir: '',              // 自动探测（WSL 或本机）
       geminiDir: path.join(WIN_HOME, '.gemini'),
       qwenDir: path.join(WIN_HOME, '.qwen'),
+      zcodeDir: path.join(WIN_HOME, '.zcode'),
       kimiDir: path.join(process.env.APPDATA || path.join(WIN_HOME, 'AppData', 'Roaming'), 'kimi-desktop', 'kimi-agent'),
       claudeSettingsPath: '',
     },
@@ -106,13 +114,17 @@ class JsonStore {
       try { raw = JSON.parse(fs.readFileSync(this.file + '.bak', 'utf8')); } catch (_) { raw = null; }
     }
     this.data = deepMerge(this.defaults(), raw || {});
-    // providers 数组：补齐默认项缺失字段
+    // providers 数组：补齐默认项缺失字段，并把新版本新增的内置服务商补进老配置
     if (Array.isArray(this.data.providers)) {
       const defs = this.defaults().providers;
       this.data.providers = this.data.providers.map((p) => {
         const d = defs.find((x) => x.id === p.id) || defs.find((x) => x.type === p.type) || {};
         return { ...d, ...p };
       });
+      // providersSeen 记录已合入过的 id；用户删除过的内置项不会在这里复活
+      const seen = Array.isArray(this.data.providersSeen) ? this.data.providersSeen : [];
+      for (const d of defs) if (!seen.includes(d.id) && !this.data.providers.some((p) => p.id === d.id)) this.data.providers.push({ ...d });
+      this.data.providersSeen = [...new Set([...seen, ...defs.map((x) => x.id)])];
     }
     return this.data;
   }
@@ -135,13 +147,16 @@ class JsonStore {
 function defaultState() {
   return {
     handoffReturns: [],   // project/tool -> original local session reference; no transcript text
+    handoffWorkspaces: [], // 来源会话引用 -> 已确认的项目目录；不跨会话复用
     handoffTimings: [],   // completed request durations/workload only, no conversation contents
     snapshots: {},        // providerId -> 最近一次成功结果
     ledgers: {},          // providerId -> { date, lastBalance, lastCurrency, todayUsage, history[] }
     models: {},           // providerId -> [model ids]
     announcements: {},    // providerId -> [ids]
     rssSeen: {},          // url -> [guids]
+    newsStatus: {},       // url -> latest public feed check; no account credentials
     notifications: [],    // { id, ts, kind, title, body, providerId, read }
+    giftClaims: [],       // 送额度待领取：{ key, providerId, windowKey, label, granted, remaining, resetsAt, claimed }
     lastActive: null,     // 最近活跃的 providerId
     lastActiveAt: 0,
     codexModels: [],      // codex models_cache 里的 slug 列表

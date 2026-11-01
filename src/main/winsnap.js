@@ -42,6 +42,7 @@ function init() {
       GetAncestor: user32.func('void * __stdcall GetAncestor(void *hwnd, uint32 flags)'),
       SetForegroundWindow: user32.func('bool __stdcall SetForegroundWindow(void *hwnd)'),
       ShowWindow: user32.func('bool __stdcall ShowWindow(void *hwnd, int cmd)'),
+      ShowWindowAsync: user32.func('bool __stdcall ShowWindowAsync(void *hwnd, int cmd)'),
       keybd_event: user32.func('void __stdcall keybd_event(uint8 vk, uint8 scan, uint32 flags, uintptr extra)'),
     };
   } catch (e) {
@@ -180,6 +181,24 @@ function focusWindow(hwndStr) {
     return !!a.SetForegroundWindow(hwnd);
   } catch (_) { return false; }
 }
+// 普通打开应用：恢复是跨线程请求，不同步等待目标 UI；不用 Alt 解锁，避免进入菜单模式。
+// 恢复最小化窗口有延迟，等待后重试，并核对真正的前台窗口。
+async function activateWindow(hwndStr) {
+  const a = init(); if (!a) return false;
+  try {
+    const hwnd = koffi.as(BigInt(hwndStr), 'void *');
+    if (!a.IsWindow(hwnd)) return false;
+    if (a.IsIconic(hwnd)) a.ShowWindowAsync(hwnd, 9);
+    else if (!a.IsWindowVisible(hwnd)) a.ShowWindowAsync(hwnd, 5);
+    for (const delay of [0, 80, 160, 240]) {
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      if (!a.IsWindow(hwnd)) return false;
+      a.SetForegroundWindow(hwnd);
+      if (!a.IsIconic(hwnd) && a.IsWindowVisible(hwnd) && String(koffi.address(a.GetForegroundWindow())) === String(hwndStr)) return true;
+    }
+    return false;
+  } catch (_) { return false; }
+}
 // 切到窗口并确认它真的到了前台；Windows 不让后台进程抢焦点时，按一下 Alt 解锁再试
 function bringToFront(hwndStr) {
   const a = init(); if (!a) return false;
@@ -286,4 +305,4 @@ function taskbars() {
   return failed ? null : out;
 }
 
-module.exports = { listWindows, windowRect, available, focusWindow, findWindow, foregroundWindow, titledWindows, taskbars, bringToFront, pasteKeys, menuWindows, tapKey };
+module.exports = { listWindows, windowRect, available, focusWindow, activateWindow, findWindow, foregroundWindow, titledWindows, taskbars, bringToFront, pasteKeys, menuWindows, tapKey };

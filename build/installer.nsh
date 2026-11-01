@@ -1,5 +1,5 @@
-; electron-builder NSIS 扩展：多一页「DeepSeek Key + 选择要部署技能的工具」
-; 静默安装参数：/S /D=<目录> /KEY=<Key> /NOSKILLS /SKILLSROOT=<代替用户目录，测试用>
+; electron-builder NSIS 扩展：多一页「DeepSeek Key + 工具转接开关 + 选择要部署技能的工具」
+; 静默安装参数：/S /D=<目录> /KEY=<Key> /NOSKILLS /NOHANDOFF /SKILLSROOT=<代替用户目录，测试用>
 !ifndef BUILD_UNINSTALLER
 !include MUI2.nsh
 !include nsDialogs.nsh
@@ -30,6 +30,8 @@ Var AipetKey
 Var AipetSkillsRoot
 Var AipetKeyCtl
 Var AipetKeyMsg
+Var AipetHandoff
+Var AipetHandoffCtl
 !macro AipetToolVars id dir label
   Var Aipet${id}
   Var Aipet${id}Ctl
@@ -44,6 +46,7 @@ Var AipetKeyMsg
 !macroend
 
 !macro customInit
+  StrCpy $AipetHandoff 1
   !insertmacro AipetTools AipetToolOn
   ReadEnvStr $AipetSkillsRoot USERPROFILE
   ${GetParameters} $R0
@@ -53,6 +56,11 @@ Var AipetKeyMsg
   ${GetOptions} $R0 "/NOSKILLS" $R1
   ${IfNot} ${Errors}
     !insertmacro AipetTools AipetToolOff
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $R0 "/NOHANDOFF" $R1
+  ${IfNot} ${Errors}
+    StrCpy $AipetHandoff 0
   ${EndIf}
   ClearErrors
   ${GetOptions} $R0 "/SKILLSROOT=" $R1
@@ -72,7 +80,7 @@ Var AipetKeyMsg
     IntOp $R6 $R6 * 34
     IntOp $R7 $R8 / 3
     IntOp $R7 $R7 * 13
-    IntOp $R7 $R7 + 66
+    IntOp $R7 $R7 + 80
     ${NSD_CreateCheckbox} $R6% $R7u 33% 12u "${label}"
     Pop $Aipet${id}Ctl
     ${If} $Aipet${id} == 1
@@ -95,12 +103,17 @@ Function AipetPageCreate
   ${NSD_OnClick} $0 AipetTestKey
   ${NSD_CreateLabel} 0 38u 100% 10u ""
   Pop $AipetKeyMsg
-  ${NSD_CreateLabel} 0 54u 100% 10u "部署 handoff / takeover 技能到（只列出本机检测到的 AI 工具）："
+  ${NSD_CreateCheckbox} 0 54u 100% 12u "启用工具转接（交接给别的 AI、一键续会话；不勾 = 仅查额度）"
+  Pop $AipetHandoffCtl
+  ${If} $AipetHandoff == 1
+    ${NSD_Check} $AipetHandoffCtl
+  ${EndIf}
+  ${NSD_CreateLabel} 0 68u 100% 10u "部署 handoff / takeover 技能到（只列出本机检测到的 AI 工具；不勾上面一项则不部署）："
   Pop $0
   StrCpy $R8 0
   !insertmacro AipetTools AipetToolBox
   ${If} $R8 == 0
-    ${NSD_CreateLabel} 0 66u 100% 10u "没检测到支持技能的 AI 工具，跳过。"
+    ${NSD_CreateLabel} 0 80u 100% 10u "没检测到支持技能的 AI 工具，跳过。"
     Pop $0
   ${EndIf}
   nsDialogs::Show
@@ -143,11 +156,13 @@ FunctionEnd
 
 Function AipetPageLeave
   ${NSD_GetText} $AipetKeyCtl $AipetKey
+  ${NSD_GetState} $AipetHandoffCtl $AipetHandoff
   !insertmacro AipetTools AipetToolRead
 FunctionEnd
 
 !macro AipetSkillsTo id dir label
-  ${If} $Aipet${id} == ${BST_CHECKED}
+  ${If} $AipetHandoff == ${BST_CHECKED}
+  ${AndIf} $Aipet${id} == ${BST_CHECKED}
   ${AndIf} ${FileExists} "$AipetSkillsRoot\${dir}\*.*"
     CreateDirectory "$AipetSkillsRoot\${dir}\skills"
     CopyFiles /SILENT "$INSTDIR\resources\skills\*.*" "$AipetSkillsRoot\${dir}\skills"
@@ -163,6 +178,16 @@ FunctionEnd
     FileWrite $0 $AipetKey
     FileClose $0
   ${EndIf}
+  ; 转接开关：勾不勾都写，重装时改选项即生效；没这个文件 = 沿用现状（默认启用）
+  ReadEnvStr $R2 APPDATA
+  CreateDirectory "$R2\${PRODUCT_NAME}"
+  FileOpen $0 "$R2\${PRODUCT_NAME}\install-features.txt" w
+  ${If} $AipetHandoff == ${BST_CHECKED}
+    FileWrite $0 "handoff=1"
+  ${Else}
+    FileWrite $0 "handoff=0"
+  ${EndIf}
+  FileClose $0
   !insertmacro AipetTools AipetSkillsTo
 !macroend
 !endif
