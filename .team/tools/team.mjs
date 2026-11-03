@@ -417,8 +417,11 @@ function globMayOverlap(a, b) {
       const A = normPath(x).toLowerCase();
       const B = normPath(y).toLowerCase();
       if (A === B) return true;
-      if (!/[*?]/.test(A) && globToRegExp(B).test(A)) return true;
-      if (!/[*?]/.test(B) && globToRegExp(A).test(B)) return true;
+      const aWild = /[*?]/.test(A);
+      const bWild = /[*?]/.test(B);
+      if (!aWild && !bWild) return false;
+      if (!aWild && globToRegExp(B).test(A)) return true;
+      if (!bWild && globToRegExp(A).test(B)) return true;
       const pa = literalPrefix(A);
       const pb = literalPrefix(B);
       if (pa && pb && !pa.startsWith(pb) && !pb.startsWith(pa)) continue;
