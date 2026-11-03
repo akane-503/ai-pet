@@ -592,6 +592,16 @@ function cmdInit(opts) {
       }
     }
     const cfgTools = loadConfig(ctx);
+    const managerFile = path.join(ctx.teamDir, 'MANAGER.md');
+    if (!fs.existsSync(managerFile)) {
+      atomicWrite(managerFile, renderTemplate('MANAGER.md', {
+        PROJECT: cfgTools.project,
+        DATE: nowIso().slice(0, 10),
+        BASE_BRANCH: cfgTools.baseBranch,
+        INTEGRATION_BRANCH: cfgTools.integrationBranch,
+        GATE: cfgTools.gateCommand || '（未设置）',
+      }, ''));
+    }
     console.log(`已刷新 CLI/模板：${ctx.teamDir}/tools/（基线 ${cfgTools.baseBranch}，集成 ${cfgTools.integrationBranch}）`);
     return;
   }
@@ -638,7 +648,7 @@ function cmdInit(opts) {
     GATE: gate || '（未设置：integrate 跳过门禁，建议 team.mjs init 时用 --gate 指定）',
   };
 
-  const templateFiles = ['PROTOCOL.md', 'CHARTER.md', 'ARCHITECTURE.md', 'BULLETIN.md'];
+  const templateFiles = ['PROTOCOL.md', 'CHARTER.md', 'ARCHITECTURE.md', 'BULLETIN.md', 'MANAGER.md'];
   for (const name of templateFiles) {
     const target = path.join(ctx.teamDir, name);
     if (name === 'BULLETIN.md' || force || !fs.existsSync(target)) {
@@ -1498,6 +1508,17 @@ function cmdClean(opts) {
 
 // ---------------------------------------------------------------- bulletin / note
 
+function cmdManager(opts) {
+  const ctx = resolveContext();
+  requireInitialized(ctx);
+  const file = path.join(ctx.teamDir, 'MANAGER.md');
+  if (!fs.existsSync(file)) {
+    throw new TeamError('NO_MANAGER', `缺少 .team/MANAGER.md`, 2, '跑 node .team/tools/team.mjs init --tools-only');
+  }
+  if (opts.json) return jsonOut({ path: file, content: readText(file) });
+  console.log(readText(file));
+}
+
 function cmdBulletin(opts) {
   const ctx = resolveContext();
   requireInitialized(ctx);
@@ -1864,6 +1885,7 @@ function printHelp() {
   init [--base main] [--integration team/integration] [--gate "pnpm test"] [--link "node_modules"] [--tools-only] [--force]
   doctor [--fix] [--json]
   status [--json]
+  manager
   bulletin [--json]
   note --text "..." [--by manager]
 
@@ -1912,6 +1934,7 @@ function main() {
     case 'init': return cmdInit(opts);
     case 'doctor': return cmdDoctor(opts);
     case 'status': return cmdStatus(opts);
+    case 'manager': return cmdManager(opts);
     case 'bulletin': return cmdBulletin(opts);
     case 'note': return cmdNote(opts);
     case 'task': {
