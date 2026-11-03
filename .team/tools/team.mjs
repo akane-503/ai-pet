@@ -754,14 +754,15 @@ function cmdTaskAdd(opts) {
   const read = splitList(opts.read);
   const deps = splitList(opts.deps || opts.dep);
   const verify = opts.verify ? String(opts.verify) : '';
-  const module = opts.module ? String(opts.module) : '';
+  const moduleList = splitList(opts.module);
+  const module = moduleList.join(',');
   if (!write.length) throw new TeamError('NO_WRITE', '任务必须声明 --write 写集（glob，多个用逗号或分号分隔）');
   if (!verify && !opts['no-verify']) throw new TeamError('NO_VERIFY', '任务必须声明 --verify 验收命令（纯文档任务可用 --no-verify）');
-  if (module && !ownership.modules?.[module]) {
-    throw new TeamError('UNKNOWN_MODULE', `模块 ${module} 未在 OWNERSHIP.json 登记`, 2, '先登记模块 glob，或改用 --allow-outside');
+  for (const m of moduleList) {
+    if (!ownership.modules?.[m]) throw new TeamError('UNKNOWN_MODULE', `模块 ${m} 未在 OWNERSHIP.json 登记`, 2, '先登记模块 glob，或改用 --allow-outside');
   }
-  if (module && !opts['allow-outside']) {
-    const modGlobs = ownership.modules[module];
+  if (moduleList.length && !opts['allow-outside']) {
+    const modGlobs = moduleList.flatMap((m) => ownership.modules[m]);
     const bad = write.filter((g) => !setsOverlap([g], modGlobs));
     if (bad.length) throw new TeamError('OUTSIDE_MODULE', `写集不在模块 ${module} 内：${bad.join(', ')}`, 2, '改 glob 或加 --allow-outside');
   }
@@ -1704,7 +1705,7 @@ function computeImpact(st, cr) {
     for (const t of Object.values(st.tasks)) {
       if (affected.has(t.id) || t.status === '关闭') continue;
       const hitGlobs = touches.length > 0 && setsOverlap(t.write, touches);
-      const hitModule = t.module && touches.includes(t.module);
+      const hitModule = String(t.module || '').split(',').filter(Boolean).some((m) => touches.includes(m));
       const hitDep = (t.deps || []).some((d) => affected.has(d));
       if (hitGlobs || hitModule || hitDep) {
         affected.add(t.id);
