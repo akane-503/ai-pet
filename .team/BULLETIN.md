@@ -1,11 +1,14 @@
 # 公告栏（BULLETIN）
 
 > 项目：ai-pet · 唯一交接渠道 · 由 `team` CLI 维护，勿手改
-> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-03T08:37:24.570Z
+> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-03T10:02:30.684Z
 
-## 暂无任务
+## 待认领
 
-用 `team task add` 建任务，`team dispatch` 派单。
+| 任务 | 认领者（会话） | 状态 | 证据 | 阻塞 / 下一步 | 更新 |
+|---|---|---|---|---|---|
+| T-001 主进程与 Provider 可拆改进点盘点 | — | 待认领 | — | 等 manager dispatch | 11-03 18:02 |
+| T-002 渲染层与共享模块可拆改进点盘点 | — | 待认领 | — | 等 manager dispatch | 11-03 18:02 |
 
 ---
 

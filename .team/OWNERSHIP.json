@@ -8,7 +8,7 @@
     "m-scripts": ["scripts/**"],
     "m-skills": ["skills/**"],
     "m-launcher": ["start.cmd"],
-    "m-docs": ["README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md"]
+    "m-docs": ["README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "docs/**"]
   },
   "protected": [
     "package.json",
