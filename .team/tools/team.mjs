@@ -1316,6 +1316,7 @@ function ensureIntegrationWorktree(ctx, cfg) {
     ensureDir(path.dirname(wt));
     git(['worktree', 'add', wt, cfg.integrationBranch], ctx.controlRoot);
   }
+  linkWorktreeDirs(ctx, cfg, wt);
   return wt;
 }
 
