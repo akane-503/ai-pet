@@ -36,6 +36,7 @@
   <section id="tab-takeover" class="tab hidden">
     <h1>接手与转接</h1>
     <div class="card"><label><input id="feature-handoff" type="checkbox"> 启用工具转接</label><p class="hint">保存后更新桌宠的转接入口。关闭时仍可查看额度、角色和工具配置。</p></div>
+    <div class="card"><h3>接手技能</h3><p class="hint">把 handoff / takeover 两个技能装进本机 AI 工具的 skills 目录（例如 ~/.claude/skills）。只写这两个文件夹，不动其他技能；装完再装新工具，回来补一次即可，不用重装桌宠。</p><div id="skill-tools"><p class="hint">正在读取本机工具…</p></div><div class="toolbar"><button id="skills-all">全部部署到已检测到的工具</button><span id="skill-msg" class="hint"></span></div></div>
     <p class="hint">直接转接传递本地会话引用，目标 AI 只读取指定会话的尾部，再核对项目现场。读取器不调用模型，也不上传会话。</p>
     <div class="card"><h3>接手来源校验</h3><label class="reference-field">来源会话<input id="takeover-ref" type="text" placeholder="粘贴 zcode:、cursor: 引用或会话文件绝对路径"></label><button id="takeover-check">只读校验</button><pre id="takeover-result" role="status">尚未校验。这里只显示会话信息，不展示聊天正文。</pre></div>
     <div class="card"><h3>转接前检查</h3><div id="takeover-capabilities"></div><p class="hint">有会话读取能力的工具可作为直接转接来源。目标工具还需支持本机工具操作；网页入口需要你自行粘贴指令。源会话定位有歧义时，在桌宠的来源会话菜单中明确选择。</p></div>

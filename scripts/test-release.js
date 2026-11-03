@@ -23,6 +23,17 @@ test('release allowlist has assets and launcher but excludes history and private
   assert.ok(files.includes('skills/takeover/SKILL.md'));
   assert.equal(scanRelease(root, files).credentialsFound, false);
 });
+test('installer keeps no feature questionnaire; the app owns setup and skill deployment', () => {
+  const root = path.resolve(__dirname, '..');
+  const nsh = fs.readFileSync(path.join(root, 'build/installer.nsh'), 'utf8');
+  assert.doesNotMatch(nsh, /nsDialogs|customPageAfterChangeDir/i);
+  assert.doesNotMatch(nsh, /skills/i);
+  assert.match(nsh, /\/NOHANDOFF/);
+  assert.equal(fs.existsSync(path.join(root, 'build/quota-installer.nsh')), false);
+  assert.equal(fs.existsSync(path.join(root, 'build/keytest.ps1')), false);
+  const files = filesForRelease(root);
+  assert.equal(files.some((f) => /quota-installer|keytest/.test(f)), false);
+});
 test('release scan blocks real-looking tokens and local paths without echoing their values', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-pet-release-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

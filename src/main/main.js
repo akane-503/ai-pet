@@ -22,11 +22,14 @@ const http = require('./http');
 const desktopDraft = require('./desktop-draft');
 const geometry = require('../shared/geometry');
 const EDITION = require('./edition');
-// 安装时未勾「启用工具转接」= 额度纯享（原 B 版）行为；由 install-features.txt 在启动时决定，见下方 installFeatures()
+const skills = require('./skills');
+// 关闭工具转接 = 只查额度的纯享模式；首启向导或设置里可改（配置 features.handoff）
 let QUOTA_ONLY = false;
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const ASSETS = path.join(ROOT, 'assets');
+// 技能随 extraResources 放在 resources\skills；开发时用仓库里的 skills
+const SKILLS_SRC = app.isPackaged ? path.join(process.resourcesPath, 'skills') : path.join(ROOT, 'skills');
 const IS_WIN = process.platform === 'win32';
 const dataDirArg = process.argv.find((arg) => arg.startsWith('--data-dir='));
 if (dataDirArg) app.setPath('userData', path.resolve(dataDirArg.slice('--data-dir='.length)));
@@ -40,6 +43,13 @@ const userData = app.getPath('userData');
 const config = new JsonStore(path.join(userData, 'config.json'), defaultConfig);
 const state = new JsonStore(path.join(userData, 'state.json'), defaultState);
 config.load(); state.load();
+// 首启向导取代了安装器里的功能勾选：老配置按已有标记视为已完成，新安装才跑向导
+try {
+  if (config.data.setupWizardDone === undefined) {
+    config.data.setupWizardDone = !!(config.data.firstRunDone || config.data.quotaOnboardingDone);
+    config.save();
+  }
+} catch (_) { /* 配置还没成形就从没设置过 */ }
 // Cursor 是多模型工具，没有单独的 cursor 立绘：旧配置里指向不存在的 cursor 角色，统一回落 Claude 娘；
 // 真正的角色由 cursor-model 按当前模型决定（见 mascotOf）。
 try {
@@ -221,7 +231,7 @@ let quipsBusy = false;
 function codexHome() { const p = (config.data.providers || []).find((x) => x.type === 'codex' && x.codexHome); return (p && p.codexHome) || (config.data.activity || {}).codexDir || path.join(app.getPath('home'), '.codex'); }
 function quipsKey() { const q = config.data.quips || {}; if (q.apiKey) return q.apiKey; const ds = (config.data.providers || []).find((p) => p.type === 'deepseek' && p.apiKey); return ds ? ds.apiKey : ''; }
 async function refreshQuips({ force = false } = {}) {
-  if (QUOTA_ONLY) return { ok: false, message: 'B 版仅查询额度' };
+  if (QUOTA_ONLY) return { ok: false, message: '当前是只查额度的纯享模式' };
   const q = config.data.quips || {};
   if (quipsBusy) return { ok: false, message: '正在生成中' };
   if (!q.enabled && !force) return { ok: false, message: '已关闭' };
@@ -258,7 +268,13 @@ function applyPetVisibility() {
   if(visible&&!petWin.isVisible())petWin.showInactive();
   else if(!visible&&petWin.isVisible()){closePanel();petWin.hide();}
 }
-function setPetVisible(visible) {petManuallyHidden=!visible;applyPetVisibility();updateTrayMenu();}
+// 关闭桌宠窗口 = 隐藏（托盘可唤回），并允许窗口被外部销毁后重建，避免只剩托盘图标的幽灵进程
+function setPetVisible(visible) {
+  petManuallyHidden = !visible;
+  const recreated = visible && (!petWin || petWin.isDestroyed());
+  if (recreated) createPetWindow(); else applyPetVisibility();
+  updateTrayMenu();
+}
 function updatePetFullscreenVisibility(fg) {
   if(!petWin||petWin.isDestroyed())return;
   const display=displayFor(petRect()),origin=screen.dipToScreenPoint({x:display.bounds.x,y:display.bounds.y});
@@ -550,6 +566,8 @@ function createPetWindow() {
     petWin.setAlwaysOnTop(true, 'screen-saver');
   }, 5000);
   petWin.on('closed', () => clearInterval(keepTop));
+  // Alt+F4 / 外部关闭只隐藏；真正退出时 quitting 已置位，窗口照常销毁
+  petWin.on('close', (e) => { if (!quitting) { e.preventDefault(); setPetVisible(false); } });
   petWin.loadFile(path.join(ROOT, 'src', 'renderer', 'pet.html'), { hash: flipped ? 'left' : '' });
   petWin.once('ready-to-show', () => { updatePetFullscreenVisibility(winsnap.foregroundWindow());applyPetVisibility();ensureOnScreen(); });
   petWin.webContents.on('console-message', (ev) => { const { level, message, lineNumber, sourceId } = ev; if (level !== 'info' && level !== 'debug' || process.env.AIPET_DEBUG) log('[renderer]', message, sourceId ? `(${path.basename(String(sourceId))}:${lineNumber})` : ''); });
@@ -798,7 +816,7 @@ function createTray() {
     const img = nativeImage.createFromPath(path.join(ASSETS, 'app.ico'));
     tray = new Tray(img);
     tray.setToolTip('AI 桌宠');
-  tray.on('click', () => { if (petWin) { setPetVisible(true);sendPet('cmd', { name: 'bubble' }); } });
+  tray.on('click', () => { setPetVisible(true); sendPet('cmd', { name: 'bubble' }); });
   tray.on('double-click', () => openSettings('providers'));
     updateTrayMenu();
   } catch (e) { log('tray failed', e.message); }
@@ -1439,6 +1457,19 @@ ipcMain.handle('environment:scan', async (e, draft) => {
   for (const [id, override] of Object.entries(next.launch || {})) if (override?.kind) specs[id] = launcher.resolve(id, next.launch);
   return require('./tool-registry').inspect(next, specs, { available: launcher.localAvailable, modelInfo: (id,a)=>agentModel.info(id,a), cursorInfo:()=>cursorModel.info((next.providers||[]).find(p=>p.type==='cursor')?.dbPath) });
 });
+// 接手技能：安装器不再拷技能，由首启向导和设置页按工具部署/移除
+ipcMain.handle('skills:list', (e) => {
+  if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) throw new Error('仅设置窗口可查看技能部署');
+  return { source: SKILLS_SRC, tools: skills.list({ source: SKILLS_SRC }) };
+});
+ipcMain.handle('skills:set', (e, patch) => {
+  if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) throw new Error('仅设置窗口可部署技能');
+  const tools = Array.isArray(patch && patch.tools) ? patch.tools.filter((id) => typeof id === 'string') : [];
+  if (!tools.length) throw new Error('请先选择要部署技能的工具');
+  const action = patch && patch.action === 'remove' ? 'remove' : 'install';
+  const result = action === 'remove' ? skills.remove({ tools }) : skills.deploy({ tools, source: SKILLS_SRC });
+  return { ...result, action, tools: skills.list({ source: SKILLS_SRC }) };
+});
 ipcMain.handle('takeover:inspect', (e, ref) => {
   if (!settingsWin || settingsWin.isDestroyed() || e.sender !== settingsWin.webContents) throw new Error('仅设置窗口可校验接手来源');
   try {
@@ -1512,7 +1543,7 @@ ipcMain.handle('config:set', (e, next) => {
 });
 ipcMain.handle('provider:test', async (e, p) => providers.fetchSnapshot(p, { wantModels: !QUOTA_ONLY }));
 ipcMain.handle('importers:scan', async () => importers.scan());
-ipcMain.handle('meta', () => ({ types: providers.TYPE_META, characters: allCharacters(), characterImages: characterImages(), userData, root: ROOT, quotaOnly: QUOTA_ONLY, snapAvailable: winsnap.available(), version: app.getVersion(), electron: process.versions.electron }));
+ipcMain.handle('meta', () => ({ types: providers.TYPE_META, characters: allCharacters(), characterImages: characterImages(), userData, root: ROOT, quotaOnly: QUOTA_ONLY, setupNeeded: !config.data.setupWizardDone, snapAvailable: winsnap.available(), version: app.getVersion(), electron: process.versions.electron }));
 ipcMain.handle('state:get', () => state.data);
 ipcMain.handle('notifications:list', () => state.data.notifications);
 ipcMain.handle('news:check', async (e, cfg) => {
@@ -1526,17 +1557,17 @@ ipcMain.handle('pick-dir', async () => { const r = await dialog.showOpenDialog({
 ipcMain.handle('activity:now', () => { checkActivity(); return lastActivity; });
 
 // ---------- 生命周期 ----------
-app.on('second-instance', () => { if (petWin) { setPetVisible(true); sendPet('cmd', { name: 'bubble' }); } });
+app.on('second-instance', () => { setPetVisible(true); sendPet('cmd', { name: 'bubble' }); });
 app.on('window-all-closed', (e) => { /* 托盘常驻 */ });
 app.on('before-quit', () => { quitting = true; closePanel(); config.save(); state.save(); });
 
 app.whenReady().then(() => {
   updateScreenAreas();
-  const firstRun = QUOTA_ONLY ? !config.data.quotaOnboardingDone : !config.data.firstRunDone;
+  const firstRun = !config.data.setupWizardDone;
   if (firstRun) { config.data.firstRunDone = true; config.save(); }
   createTray();
   createPetWindow();
-  if (firstRun) openSettings('providers');
+  if (firstRun) openSettings('tools');
   checkActivity();
   // 首次：只把本机装了的预设 agent 加进来
   launcher.discover([...agents(), ...AGENT_PRESETS]).then(() => {

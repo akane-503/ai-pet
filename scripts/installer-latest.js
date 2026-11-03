@@ -5,7 +5,8 @@ const crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const dir = path.join(root, pkg.build.directories.output);
-const source = path.join(dir, `AI桌宠-Setup-${pkg.version}.exe`);
+// 安装包文件名用 ASCII：latest.yml 里的下载名必须和真实文件一致，非 ASCII 会被换成默认名导致 404
+const source = path.join(dir, `AI-Pet-Setup-${pkg.version}.exe`);
 const target = path.join(dir, 'setup.exe');
 // Run only after a successful installer build; retain versioned installers for recovery.
 const fd = fs.openSync(source, 'r');

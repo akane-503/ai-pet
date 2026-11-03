@@ -959,7 +959,7 @@ test('API handoff shows the conversation it read and the history it replaced in 
   assert.ok(sent.some((v) => /可能不是你正开着的对话/.test(v.detail || '')), 'stale source must be called out');
   assert.match(sent.at(-1).detail, /旧版 319 行已备份/);
   const session={tool:'codex',id:'01234567-89ab-cdef-0123-456789abcdef'};
-  ctx.handoffReturn={...require('../src/main/handoff-return'),find:()=>session};
+  ctx.handoffReturn={...require('../src/main/handoff-return'),find:()=>session, prompt:()=>'$takeover --incremental fixture'};
   const requests=[];
   ctx.launcher.launch=async (...args)=>{requests.push(args);return {ok:true,sessionRestored:true,draftPrepared:true};};
   await vm.runInContext("runHandoff('codex', {kind:'store',label:'Codex'}, {character:'claude',hwnd:'h',title:'Claude'})",ctx);
@@ -1185,13 +1185,15 @@ test('API handoff does not mistake tool-internal git repos for the project root'
 test('handoff files parked in the global .handoff cache expose no workspace', () => {
   const handoff = require('../src/main/handoff');
   const cache = path.dirname(handoff.LATEST);
+  const existed = fs.existsSync(cache);
+  fs.mkdirSync(cache, { recursive: true });
   const file = path.join(cache, `HANDOFF-test-${process.pid}.md`);
   fs.writeFileSync(file, '# HANDOFF — 没识别出项目时先停在这里\n\n正文\n');
   try {
     // 没有项目标记又躺在全局缓存里 → 不当工作区，主进程会弹目录选择并搬走文件
     assert.equal(handoff.workspaceOf(file), null);
     assert.throws(() => handoff.placeInWorkspace(file, cache), /实际项目文件夹/);
-  } finally { fs.rmSync(file, { force: true }); }
+  } finally { fs.rmSync(file, { force: true }); if (!existed) fs.rmdirSync(cache); }
 });
 
 test('handoff marker falls back to the last existing file when the newest entry is gone', () => {
@@ -2381,5 +2383,53 @@ test('DSH session picker hides empty sessions and jsonl rows carry their project
     const cdir = path.join(dir, 'projects', 'p'); fs.mkdirSync(cdir, { recursive: true });
     fs.writeFileSync(path.join(cdir, 'a.jsonl'), JSON.stringify({ type: 'user', cwd: proj, message: { role: 'user', content: 'x' } }) + '\n');
     assert.equal(require('../src/main/handoff-api').recentSessions('claude', [dir], 5)[0].project, path.basename(proj));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Codex transfer follows the project open in the app, not the most recently written thread', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-codex-active-'));
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const projA = path.join(dir, 'proj-a'), projB = path.join(dir, 'proj-b');
+    fs.mkdirSync(projA); fs.mkdirSync(projB);
+    const ses = path.join(dir, 'sessions', '2026', '11'); fs.mkdirSync(ses, { recursive: true });
+    const rollA = path.join(ses, 'rollout-a.jsonl'), rollB = path.join(ses, 'rollout-b.jsonl');
+    const line = (cwd) => JSON.stringify({ type: 'session_meta', payload: { cwd } }) + '\n'
+      + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'do it' }] } }) + '\n';
+    fs.writeFileSync(rollA, line(projA)); fs.writeFileSync(rollB, line(projB));
+    const db = new DatabaseSync(path.join(dir, 'state_5.sqlite'));
+    db.exec('create table threads(rollout_path text, name text, title text, cwd text, updated_at_ms integer, archived integer)');
+    const ins = db.prepare('insert into threads values(?,?,?,?,?,0)'), unc = '\\\\?\\';
+    ins.run(rollA, '旧项目对话', '旧项目对话', unc + projA, 1000);
+    ins.run(rollB, '新项目对话', '新项目对话', unc + projB, 2000);
+    db.close();
+    const h = require('../src/main/handoff-api');
+    assert.equal(h.newestTranscript('codex', [dir]), rollB, '没有 UI 状态时仍按最近更新取');
+    fs.writeFileSync(path.join(dir, '.codex-global-state.json'), JSON.stringify({ 'active-workspace-roots': [projA] }));
+    assert.equal(h.newestTranscript('codex', [dir]), rollA, '窗口开着 A 项目，别取 B 里刚写过的线程');
+    assert.equal(h.sessionPointer('codex', [dir]).project, projA);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Codex transfer keeps the folder open in the tool instead of a nested repo it worked in', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-codex-nested-'));
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const proj = path.join(dir, 'proj'), sub = path.join(proj, 'Host', 'Sub');
+    fs.mkdirSync(sub, { recursive: true }); fs.mkdirSync(path.join(sub, '.git'));
+    const ses = path.join(dir, 'sessions', '2026', '11'); fs.mkdirSync(ses, { recursive: true });
+    const roll = path.join(ses, 'rollout.jsonl');
+    const rows = [
+      { type: 'session_meta', payload: { cwd: proj } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix it' }] } },
+      { type: 'response_item', payload: { type: 'function_call', arguments: JSON.stringify({ workdir: sub, cmd: 'git status' }) } },
+    ];
+    fs.writeFileSync(roll, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const db = new DatabaseSync(path.join(dir, 'state_5.sqlite'));
+    db.exec('create table threads(rollout_path text, name text, title text, cwd text, updated_at_ms integer, archived integer)');
+    db.prepare('insert into threads values(?,?,?,?,?,0)').run(roll, 't', 't', '\\\\?\\' + proj, 1);
+    db.close();
+    const h = require('../src/main/handoff-api');
+    assert.equal(h.sessionPointer('codex', [dir], '', roll).project, proj, '工具里开的项目是 proj，别被 sub 里的 .git 拽到子目录');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

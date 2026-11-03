@@ -81,7 +81,7 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
   const ref = parseRef(value);
   limit = Math.max(2, Math.min(60, Number(limit) || 18));
   maxBytes = Math.max(4096, Math.min(MAX_BYTES, Number(maxBytes) || MAX_BYTES));
-  const result = { ...ref, project: '', title: '', messages: [], workspaceHints: [], truncated: false };
+  const result = { ...ref, project: '', title: '', messages: [], workspaceHints: [], truncated: false, indexed: false };
   if (ref.kind === 'zcode' || ref.kind === 'cursor') {
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(ref.file, { readOnly: true });
@@ -113,6 +113,7 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
         result.title = data.name || '';
         const uri=data.workspaceIdentifier?.uri||data.workspaceUri;
         result.project = data.workspaceIdentifier?.fsPath || (typeof uri==='string'?uri:uri?.fsPath||uri?.path) || data.workspacePath || '';
+        if (result.project) result.indexed = true;
         const headers = data.fullConversationHeadersOnly || [];
         result.truncated = headers.length > limit;
         const query = db.prepare('select substr(value,1,?) value from cursorDiskKV where key=?');
@@ -148,7 +149,7 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
         // session 事件（带 cwd）只写在文件头，尾部窗口里通常已经没有它：工作区得单独从头里取，
         // 否则 DSH 来源永远定位不到项目，只能让接手 AI 自己找
         const head = dshText(readAt(0, Math.min(size, 65536)));
-        for(const line of head.split(/\r?\n/)) { try { const d=JSON.parse(line); if(d.type==='session'&&d.cwd) { result.project=d.cwd; break; } } catch(_) {} }
+        for(const line of head.split(/\r?\n/)) { try { const d=JSON.parse(line); if(d.type==='session'&&d.cwd) { result.project=d.cwd; result.indexed=true; break; } } catch(_) {} }
         // 尾部可能被大段工具输出占满，把用户/助手消息挤出窗口：逐级放大再读，最多 2 MiB
         for(let bytes=maxBytes;;bytes*=4) {
           const start=Math.max(0,size-bytes);
@@ -210,7 +211,7 @@ function readSession(value, { limit = 18, maxBytes = MAX_BYTES } = {}) {
   }).reverse();
   if(ref.kind==='jsonl') {
     const metadata=codexMetadata(ref.file);
-    if(metadata?.cwd)result.project=metadata.cwd;
+    if(metadata?.cwd){result.project=metadata.cwd;result.indexed=true;}
     if(metadata?.title)result.title=metadata.title;
   }
   result.project=normalizeWorkspace(result.project);

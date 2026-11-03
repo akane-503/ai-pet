@@ -54,7 +54,7 @@ function defaultConfig() {
       { id: 'kimi', type: 'kimi', name: 'Kimi', enabled: false, agentDir: '', warnPercent: 90, character: 'kimi' },
     ],
     providersSeen: [],         // 合入过配置的内置服务商 id；新版本新增项据此补进老配置，删除过的不会复活
-    features: { handoff: true }, // 安装时可选装的功能；工具转接关闭 = 额度纯享（原 B 版）行为
+    features: { handoff: true }, // 工具转接总开关；关闭 = 只查额度的纯享模式（首启向导或设置里可改）
     notify: {
       toast: false, bubble: true, sound: false,
       resets: true, gifts: true, newModels: true, lowBalance: true, announcements: false, rss: false,

@@ -39,12 +39,37 @@ function aiTitle(file) {
   } catch (_) { return ''; }
 }
 
-// Codex 会话索引在 state_5.sqlite 的 threads 表（rollout_path 指向完整 jsonl）；按文件 mtime 猜会挑到别的会话
-// shortcut: 窗口标题不带会话名，只能取最近更新的未归档会话，同时开多个 Codex 会话时可能取错
-function codexThread(dir) {
+// Codex 会话索引在 state_5.sqlite 的 threads 表（rollout_path 指向完整 jsonl）。
+// 只按 updated_at_ms 取最新会挑错：换项目/换线程是纯 UI 操作，不写这个时间；
+// 另一个项目里刚跑完一轮的线程会一直是「最新」，哪怕你眼前开的是别的对话。
+// 桌面版把当前打开的项目记在 .codex-global-state.json 的 active-workspace-roots，用它先限定项目。
+const codexRootCache = new Map();
+const cleanFsPath = (s) => String(s || '').replace(/^\\\\\?\\/, '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+function codexActiveRoot(dir) {
+  const file = path.join(dir, '.codex-global-state.json');
+  let at = 0; try { at = fs.statSync(file).mtimeMs; } catch (_) { return ''; }
+  const hit = codexRootCache.get(file); if (hit && hit.at === at) return hit.root;
+  let root = '';
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    root = (Array.isArray(j['active-workspace-roots']) ? j['active-workspace-roots'] : []).map(String)
+      .find((p) => path.isAbsolute(p) && fs.existsSync(p)) || '';
+  } catch (_) { /* 状态文件读不到就退回按时间取 */ }
+  codexRootCache.set(file, { at, root });
+  return root;
+}
+function codexThread(dir, activeRoot = '') {
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(path.join(dir, 'state_5.sqlite'), { readOnly: true });
-  try { return db.prepare('select rollout_path p, name, title from threads where archived = 0 order by updated_at_ms desc limit 1').get() || null; } finally { db.close(); }
+  try {
+    // select *：老版本库里可能没有 cwd 列，少了它也要能按时间挑，不能整条查询失败
+    const rows = db.prepare('select * from threads where archived = 0 order by updated_at_ms desc limit 60').all();
+    if (!rows.length) return null;
+    const row = (r) => ({ p: r.rollout_path, name: r.name, title: r.title });
+    const root = cleanFsPath(activeRoot);
+    const hit = root && rows.find((r) => { const c = cleanFsPath(r.cwd); return c === root || c.startsWith(root + '\\'); });
+    return row(hit || rows[0]);
+  } finally { db.close(); }
 }
 
 // 来源窗口刚在前台，取最近写过的会话；同时开着几个时，用窗口标题对上会话标题
@@ -58,7 +83,7 @@ function newestTranscript(kind, dirs, winTitle = '') {
     return (matching.find(s => s.current) || matching[0] || list.find((s) => s.current) || list[0]).ref;
   }
   if (kind === 'codex') {
-    for (const d of dirs) { try { const t = codexThread(d); const p = t && t.p.replace(/^\\\\\?\\/, ''); if (p && fs.existsSync(p)) return p; } catch (_) { /* 旧版没有这个库 */ } }
+    for (const d of dirs) { try { const t = codexThread(d, codexActiveRoot(d)); const p = t && t.p.replace(/^\\\\\?\\/, ''); if (p && fs.existsSync(p)) return p; } catch (_) { /* 旧版没有这个库 */ } }
   }
   // DSH 打开工作区会先建空会话，跳过还没发过消息的
   if (kind === 'dsh') return (dirs.flatMap((d) => jsonlFiles(path.join(d, 'sessions'), 2, [], '.jsonl.zstd')).sort((a, b) => b.m - a.m).slice(0, 10).find((f) => {
@@ -927,16 +952,26 @@ async function run({ kind, dirs, winTitle, api, request, session, onRead, onWrit
 }
 
 // 直接交接用的指针：解析最近（或指定）会话，返回 { ref, project }——不整理不写文件，接手方自己读记录
+function projectDir(dir) {
+  try {
+    return path.isAbsolute(dir) && fs.statSync(dir).isDirectory() && !internalPath(dir)
+      && path.resolve(dir) !== path.parse(dir).root && path.resolve(dir) !== path.resolve(os.homedir());
+  } catch (_) { return false; }
+}
 function sessionWorkspace(r) {
   const distro = (/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)/i.exec(r.ref) || [])[1] || 'Ubuntu';
   const items = (r.workspaceHints || []).map(hint => ({role:'tool',full:JSON.stringify(hint)}));
+  // 工具自己的项目索引（Codex threads.cwd、Cursor 工作区、DSH session.cwd）就是你在工具里打开的那个文件夹。
+  // 最近几次工具调用落在它下面的子仓库/子目录，不该反过来把项目改到子目录去——那正是「转接后文件夹不一样」。
+  const indexed = require('./session-reader').normalizeWorkspace(r.cwd || r.project || '');
+  if (r.indexed && projectDir(indexed)) return indexed;
   const explicit=[...new Set((r.workspaceHints||[]).map(h=>h.workdir).filter(Boolean))];
   if(explicit.length===1) {
     let dir=require('./session-reader').normalizeWorkspace(explicit[0]);
     const m=/^\/mnt\/([a-z])\/(.*)$/i.exec(dir);
     if(m)dir=m[1].toUpperCase()+':\\'+m[2].replace(/\//g,'\\');
     else if(dir.startsWith('/home/'))dir='\\\\wsl.localhost\\'+distro+dir.replace(/\//g,'\\');
-    try {if(path.isAbsolute(dir)&&fs.statSync(dir).isDirectory()&&!internalPath(dir)&&path.resolve(dir)!==path.parse(dir).root&&path.resolve(dir)!==path.resolve(os.homedir()))return projectRoot(items,distro,dir)||dir;}catch(_){}
+    try {if(projectDir(dir))return projectRoot(items,distro,dir)||dir;}catch(_){}
   }
   return projectRoot(items, distro, r.cwd || r.project) || '';
 }

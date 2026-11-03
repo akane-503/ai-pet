@@ -1,171 +1,56 @@
-; electron-builder NSIS 扩展：多一页「DeepSeek Key + 工具转接开关 + 选择要部署技能的工具」
-; 静默安装参数：/S /D=<目录> /KEY=<Key> /NOSKILLS /NOHANDOFF /SKILLSROOT=<代替用户目录，测试用>
-!ifndef BUILD_UNINSTALLER
-!include MUI2.nsh
-!include nsDialogs.nsh
+; electron-builder NSIS 扩展：安装器只负责落盘，功能选择放在桌宠首次启动的向导里（设置里随时可改）。
+; 静默安装参数：/S /D=<目录> /KEY=<DeepSeek Key> /NOHANDOFF
+; /NOHANDOFF 仅给自动化用：写入 install-features.txt（handoff=0），桌宠下次启动并入配置。
 !include LogicLib.nsh
 !include FileFunc.nsh
 
-; 「浏览」选完目录后 NSIS 会把这里的末级目录名补进输入框（实际路径仍由 electron-builder 运行时设定）
-InstallDir "$LOCALAPPDATA\Programs\${APP_FILENAME}"
+; 升级/卸载前先关掉正在运行的旧版本。
+; 默认实现按安装目录用 PowerShell + WMI 找进程，机器上 WMI 慢或被策略限制时会长时间没有反馈，
+; 杀不掉时还会弹「无法关闭」重试框，安装看起来就卡在「正在关闭旧版本」。
+; 这里按可执行文件名直接 taskkill（不碰 WMI），再确认一次；仍杀不掉通常是旧版本以管理员身份启动，
+; 直接给出明确提示并退出，避免装到一半留下坏文件。
+!macro customCheckAppRunning
+  DetailPrint "正在关闭已运行的 ${PRODUCT_NAME}…"
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${APP_EXECUTABLE_FILENAME}"'
+  Pop $R0
+  Sleep 700
+  nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
+  Pop $R0
+  ${If} $R0 == 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "旧版 ${PRODUCT_NAME} 还在运行（可能以管理员身份启动）。请从托盘菜单退出后重新运行安装。" /SD IDOK
+    Quit
+  ${EndIf}
 
-; 能装技能的工具：id、用户目录下的文件夹（技能放其下 skills\）、显示名。目录同 Skills Manager
-!macro AipetTools M
-  !insertmacro ${M} Claude ".claude" "Claude Code"
-  !insertmacro ${M} Codex ".codex" "Codex"
-  !insertmacro ${M} Dsh ".dsh" "DeepSeek Harness"
-  !insertmacro ${M} Gemini ".gemini" "Gemini CLI"
-  !insertmacro ${M} Cursor ".cursor" "Cursor"
-  !insertmacro ${M} Copilot ".copilot" "GitHub Copilot"
-  !insertmacro ${M} Qwen ".qwen" "Qwen Code"
-  !insertmacro ${M} CodeBuddy ".codebuddy" "CodeBuddy"
-  !insertmacro ${M} WorkBuddy ".workbuddy" "WorkBuddy"
-  !insertmacro ${M} ZCode ".zcode" "ZCode"
-  !insertmacro ${M} Trae ".trae-cn" "TRAE CN"
-  !insertmacro ${M} Junie ".junie" "Junie"
-  !insertmacro ${M} OpenClaw ".openclaw" "OpenClaw"
+  ; 1.2.x 的卸载器会先跑 PowerShell/WMI 查进程，部分机器上这条命令长时间不返回，
+  ; 覆盖安装就会一直停在等它的那几个步骤上。目标目录里已经有旧程序时跳过它的卸载器：
+  ; 新安装会覆盖同名文件，并重建快捷方式和卸载项。
+  !ifndef BUILD_UNINSTALLER
+    ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      ReadRegStr $R1 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" UninstallString
+      ${If} $R1 != ""
+        DetailPrint "跳过旧版卸载器（直接覆盖安装）"
+        DeleteRegKey SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}"
+        !ifdef UNINSTALL_REGISTRY_KEY_2
+          DeleteRegKey SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY_2}"
+        !endif
+      ${EndIf}
+    ${EndIf}
+  !endif
 !macroend
 
+!ifndef BUILD_UNINSTALLER
 Var AipetKey
-Var AipetSkillsRoot
-Var AipetKeyCtl
-Var AipetKeyMsg
 Var AipetHandoff
-Var AipetHandoffCtl
-!macro AipetToolVars id dir label
-  Var Aipet${id}
-  Var Aipet${id}Ctl
-!macroend
-!insertmacro AipetTools AipetToolVars
-
-!macro AipetToolOn id dir label
-  StrCpy $Aipet${id} 1
-!macroend
-!macro AipetToolOff id dir label
-  StrCpy $Aipet${id} 0
-!macroend
 
 !macro customInit
   StrCpy $AipetHandoff 1
-  !insertmacro AipetTools AipetToolOn
-  ReadEnvStr $AipetSkillsRoot USERPROFILE
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "/KEY=" $AipetKey
   ClearErrors
-  ${GetOptions} $R0 "/NOSKILLS" $R1
-  ${IfNot} ${Errors}
-    !insertmacro AipetTools AipetToolOff
-  ${EndIf}
-  ClearErrors
   ${GetOptions} $R0 "/NOHANDOFF" $R1
   ${IfNot} ${Errors}
     StrCpy $AipetHandoff 0
-  ${EndIf}
-  ClearErrors
-  ${GetOptions} $R0 "/SKILLSROOT=" $R1
-  ${IfNot} ${Errors}
-    StrCpy $AipetSkillsRoot $R1
-  ${EndIf}
-!macroend
-
-!macro customPageAfterChangeDir
-  Page custom AipetPageCreate AipetPageLeave
-!macroend
-
-; 只列出本机检测到的工具，三列排开；$R8 是已放了几个
-!macro AipetToolBox id dir label
-  ${If} ${FileExists} "$AipetSkillsRoot\${dir}\*.*"
-    IntOp $R6 $R8 % 3
-    IntOp $R6 $R6 * 34
-    IntOp $R7 $R8 / 3
-    IntOp $R7 $R7 * 13
-    IntOp $R7 $R7 + 80
-    ${NSD_CreateCheckbox} $R6% $R7u 33% 12u "${label}"
-    Pop $Aipet${id}Ctl
-    ${If} $Aipet${id} == 1
-      ${NSD_Check} $Aipet${id}Ctl
-    ${EndIf}
-    IntOp $R8 $R8 + 1
-  ${EndIf}
-!macroend
-
-Function AipetPageCreate
-  !insertmacro MUI_HEADER_TEXT "可选设置" "之后都能在桌宠「设置」里改"
-  nsDialogs::Create 1018
-  Pop $0
-  ${NSD_CreateLabel} 0 0 100% 20u "DeepSeek API Key（用于生成台词、压缩超长会话；不填也能用）："
-  Pop $0
-  ${NSD_CreatePassword} 0 22u 80% 13u $AipetKey
-  Pop $AipetKeyCtl
-  ${NSD_CreateButton} 82% 21u 18% 15u "测试"
-  Pop $0
-  ${NSD_OnClick} $0 AipetTestKey
-  ${NSD_CreateLabel} 0 38u 100% 10u ""
-  Pop $AipetKeyMsg
-  ${NSD_CreateCheckbox} 0 54u 100% 12u "启用工具转接（交接给别的 AI、一键续会话；不勾 = 仅查额度）"
-  Pop $AipetHandoffCtl
-  ${If} $AipetHandoff == 1
-    ${NSD_Check} $AipetHandoffCtl
-  ${EndIf}
-  ${NSD_CreateLabel} 0 68u 100% 10u "部署 handoff / takeover 技能到（只列出本机检测到的 AI 工具；不勾上面一项则不部署）："
-  Pop $0
-  StrCpy $R8 0
-  !insertmacro AipetTools AipetToolBox
-  ${If} $R8 == 0
-    ${NSD_CreateLabel} 0 80u 100% 10u "没检测到支持技能的 AI 工具，跳过。"
-    Pop $0
-  ${EndIf}
-  nsDialogs::Show
-FunctionEnd
-
-; 查余额顺便验 Key；Key 走环境变量传给 PowerShell，不进命令行
-Function AipetTestKey
-  ${NSD_GetText} $AipetKeyCtl $R0
-  ${If} $R0 == ""
-    ${NSD_SetText} $AipetKeyMsg "先填 Key"
-    Return
-  ${EndIf}
-  ${NSD_SetText} $AipetKeyMsg "测试中…"
-  InitPluginsDir
-  File "/oname=$PLUGINSDIR\keytest.ps1" "${BUILD_RESOURCES_DIR}\keytest.ps1"
-  System::Call 'Kernel32::SetEnvironmentVariable(t "AIPET_KEY", t R0)'
-  nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\keytest.ps1"'
-  Pop $R1
-  Pop $R2
-  System::Call 'Kernel32::SetEnvironmentVariable(t "AIPET_KEY", p 0)'
-  ${If} $R1 == 0
-    ${NSD_SetText} $AipetKeyMsg "✓ 可用，余额 $R2"
-  ${ElseIf} $R1 == 2
-    ${NSD_SetText} $AipetKeyMsg "✗ Key 无效（DeepSeek 返回 401）"
-  ${ElseIf} $R1 == 4
-    ${NSD_SetText} $AipetKeyMsg "✗ 连不上 api.deepseek.com，检查网络"
-  ${ElseIf} $R1 == 5
-    ${NSD_SetText} $AipetKeyMsg "✗ 不像 DeepSeek Key（应以 sk- 开头）"
-  ${Else}
-    ${NSD_SetText} $AipetKeyMsg "✗ 测试失败（代码 $R1）"
-  ${EndIf}
-FunctionEnd
-
-; 没列出来的工具没有控件，状态保持默认；安装时还会再查一次目录
-!macro AipetToolRead id dir label
-  ${If} $Aipet${id}Ctl != ""
-    ${NSD_GetState} $Aipet${id}Ctl $Aipet${id}
-  ${EndIf}
-!macroend
-
-Function AipetPageLeave
-  ${NSD_GetText} $AipetKeyCtl $AipetKey
-  ${NSD_GetState} $AipetHandoffCtl $AipetHandoff
-  !insertmacro AipetTools AipetToolRead
-FunctionEnd
-
-!macro AipetSkillsTo id dir label
-  ${If} $AipetHandoff == ${BST_CHECKED}
-  ${AndIf} $Aipet${id} == ${BST_CHECKED}
-  ${AndIf} ${FileExists} "$AipetSkillsRoot\${dir}\*.*"
-    CreateDirectory "$AipetSkillsRoot\${dir}\skills"
-    CopyFiles /SILENT "$INSTDIR\resources\skills\*.*" "$AipetSkillsRoot\${dir}\skills"
   ${EndIf}
 !macroend
 
@@ -178,16 +63,13 @@ FunctionEnd
     FileWrite $0 $AipetKey
     FileClose $0
   ${EndIf}
-  ; 转接开关：勾不勾都写，重装时改选项即生效；没这个文件 = 沿用现状（默认启用）
-  ReadEnvStr $R2 APPDATA
-  CreateDirectory "$R2\${PRODUCT_NAME}"
-  FileOpen $0 "$R2\${PRODUCT_NAME}\install-features.txt" w
-  ${If} $AipetHandoff == ${BST_CHECKED}
-    FileWrite $0 "handoff=1"
-  ${Else}
+  ; 只在明确带 /NOHANDOFF 时写；否则留给桌宠首启向导，重装不会覆盖用户已有选择
+  ${If} $AipetHandoff == 0
+    ReadEnvStr $R2 APPDATA
+    CreateDirectory "$R2\${PRODUCT_NAME}"
+    FileOpen $0 "$R2\${PRODUCT_NAME}\install-features.txt" w
     FileWrite $0 "handoff=0"
+    FileClose $0
   ${EndIf}
-  FileClose $0
-  !insertmacro AipetTools AipetSkillsTo
 !macroend
 !endif

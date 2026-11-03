@@ -58,6 +58,7 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + tab));
     if (tab === 'notifications') renderNotifications();
     if (tab === 'appearance') renderPreview();
+    if (tab === 'takeover' && cfg) loadSkills();
     if (tab === 'tools' && !environment && cfg) scanEnvironment();
   }
   document.querySelectorAll('#nav a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); location.hash = a.dataset.tab; goto(a.dataset.tab); }));
@@ -105,6 +106,51 @@
     if(action==='activity') document.querySelector(`[data-act="${t.activityKey}"]`)?.focus();
   });
   $('#feature-handoff').addEventListener('change', e => { cfg.features = { ...(cfg.features || {}), handoff:e.target.checked }; $('#save-msg').textContent='有未保存的更改'; });
+
+  // ---------- 接手技能：只管各工具 skills 目录下的 handoff / takeover ----------
+  let skillsState = null, skillsLoading = false;
+  async function loadSkills() {
+    if (skillsLoading) return;
+    skillsLoading = true;
+    const host = $('#skill-tools');
+    if (!skillsState) host.textContent = '正在读取本机工具…';
+    try { skillsState = await window.pet.invoke('skills:list'); renderSkills(); }
+    catch (e) { host.textContent = '读取失败：' + e.message; }
+    finally { skillsLoading = false; }
+  }
+  function renderSkills() {
+    const host = $('#skill-tools');
+    if (!host || !skillsState) return;
+    const present = skillsState.tools.filter(t => t.present);
+    if (!present.length) { host.innerHTML = '<p class="hint">没检测到支持技能的 AI 工具。装好工具后点「重新检测」，或重开设置。</p>'; return; }
+    host.innerHTML = present.map(t => {
+      const state = t.managed ? '由 Skills Manager 管理' : t.deployed ? (t.upToDate ? '已部署' : '可更新到当前版本') : '未部署';
+      const action = t.managed ? '' : t.deployed && t.upToDate ? 'remove' : 'install';
+      const label = t.managed ? '' : t.deployed && t.upToDate ? '移除' : t.deployed ? '更新' : '部署';
+      return `<div class="skill-row" data-skill="${esc(t.id)}"><b>${esc(t.name)}</b><code>${esc(t.path)}</code><span class="hint">${state}</span>${action ? `<button data-skill-action="${action}">${label}</button>` : ''}</div>`;
+    }).join('');
+  }
+  async function applySkills(action, tools) {
+    if (!tools.length) { $('#skill-msg').textContent = '没有需要处理的工具'; return; }
+    $('#skill-msg').textContent = action === 'remove' ? '正在移除…' : '正在部署…';
+    try {
+      const r = await window.pet.invoke('skills:set', { action, tools });
+      skillsState = { tools: r.tools };
+      renderSkills();
+      const failed = r.results.filter(x => !x.ok);
+      const skipped = (r.results || []).filter(x => x.skipped).length;
+      $('#skill-msg').textContent = failed.length ? `部分失败：${failed.map(x => x.name + '（' + x.error + '）').join('、')}` : skipped ? `✓ 已完成；${skipped} 个由 Skills Manager 管理的工具已跳过` : '✓ 已完成';
+    } catch (e) { $('#skill-msg').textContent = '操作失败：' + e.message; }
+  }
+  $('#skill-tools').addEventListener('click', (e) => {
+    const action = e.target.dataset.skillAction, row = e.target.closest('[data-skill]');
+    if (!action || !row) return;
+    applySkills(action, [row.dataset.skill]);
+  });
+  $('#skills-all').addEventListener('click', () => {
+    if (!skillsState) return;
+    applySkills('install', skillsState.tools.filter(t => t.present && (!t.deployed || !t.upToDate)).map(t => t.id));
+  });
   $('#takeover-check').addEventListener('click', async e=> {
     e.target.disabled=true; $('#takeover-result').textContent='正在只读校验…';
     try { const r=await window.pet.invoke('takeover:inspect',$('#takeover-ref').value.trim()); $('#takeover-result').textContent=r.ok?`${r.title || '指定会话'}\n项目：${r.project || '未识别，转接时需选择'}\n尾部可读消息：${r.messages}${r.truncated?'（有截断）':''}${r.repaired?'\n已修复缺失的路径分隔符':''}\n引用：${r.ref}`:'无法接手：'+r.error; }
@@ -419,20 +465,28 @@
     meta = await window.pet.invoke('meta');
     cfg = await window.pet.invoke('config:get');
     baseline = clone(cfg);
-    launchDefaults = await window.pet.invoke('launch:defaults');
-    const st = await window.pet.invoke('state:get');
-    data = { ...(data || {}), snapshots: st.snapshots, ledgers: st.ledgers, notifications: st.notifications, newsStatus: st.newsStatus, giftClaims: st.giftClaims };
-    applyTheme(data.colors ? data : { character: cfg.appearance.character === 'auto' ? cfg.appearance.favorite : cfg.appearance.character });
+    applyTheme({ character: cfg.appearance.character === 'auto' ? cfg.appearance.favorite : cfg.appearance.character });
     $('#userdata').textContent = meta.userData;
     $('#about-meta').textContent = `版本 ${meta.version} · Electron ${meta.electron} · 窗口吸附 ${meta.snapAvailable ? '可用' : '不可用（koffi 未加载）'} · 程序目录 ${meta.root}`;
     $('#feature-handoff').checked = cfg.features?.handoff !== false;
-    renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderAgents(); renderLaunch(); renderNotifications();
-    if (meta.quotaOnly) {
-      // 仅额度模式（安装时未启用工具转接）：入口菜单已由主进程收起；「打开工具」标签隐藏，引导页改走额度首启
-
-      window.PetOnboarding.mount({ cfg, meta, invoke: (name, p) => window.pet.invoke(name, p), save: async (provider, index) => { cfg.providers[index] = provider; cfg.quotaOnboardingDone = true; try { await persistSettings(); } catch (e) { cfg.quotaOnboardingDone = false; throw e; } }, done: () => { renderProviders(); window.pet.send('refresh'); } });
+    // 向导先挂上：本机扫描（launch:defaults）可能要几秒，不能让首启先看见半张设置页
+    if (meta.setupNeeded) {
+      window.PetOnboarding.mount({
+        cfg, meta,
+        invoke: (name, p) => window.pet.invoke(name, p),
+        apply: async (patch) => { cfg = await window.pet.invoke('config:set', patch); baseline = clone(cfg); meta = await window.pet.invoke('meta'); $('#feature-handoff').checked = cfg.features?.handoff !== false; renderProviders(); },
+        done: () => { $('#feature-handoff').checked = cfg.features?.handoff !== false; renderProviders(); loadSkills(); window.pet.send('refresh'); },
+      });
     }
+    const st = await window.pet.invoke('state:get');
+    data = { ...(data || {}), snapshots: st.snapshots, ledgers: st.ledgers, notifications: st.notifications, newsStatus: st.newsStatus, giftClaims: st.giftClaims };
+    renderProviders(); renderNotify(); renderAppearance(); renderQuips(); renderActivity(); renderAgents(); renderNotifications();
+    // 渲染时会把 null 的默认值补成空数组/对象；吸收进 baseline，保存时才不会带上无关 diff
+    baseline = clone(cfg);
     goto((location.hash || '#tools').slice(1));
     scanEnvironment();
+    // 启动覆盖依赖本机扫描结果，放到最后填，不挡首启和额度设置
+    launchDefaults = await window.pet.invoke('launch:defaults');
+    renderLaunch();
   })().catch(e => { $('#environment-status').textContent = '设置初始化失败：' + e.message; });
 })();

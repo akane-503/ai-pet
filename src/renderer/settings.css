@@ -147,6 +147,29 @@ dt { color: #69768a; } dd { margin: 0; overflow-wrap: anywhere; }
 .provider-config { margin: 0 0 4px 26px; }
 button:disabled { cursor: wait; opacity: .6; }
 .card,.prov { box-shadow: none; }
+/* 接手技能：每行一个工具，路径可点选复制 */
+.skill-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;margin:6px 0;background:var(--field)}
+.skill-row code{padding:2px 6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.skill-row .hint{margin:0;white-space:nowrap;margin-left:auto}
+.skill-row button{margin-left:4px}
+
+/* 首启向导：盖住主区域，侧栏暂时只读 */
+body.wizard-open #nav{opacity:.45;pointer-events:none}
+.setup-wizard{position:fixed;inset:0;z-index:60;overflow:auto;margin:0;padding:40px max(24px,7vw) 64px;border:0;border-radius:0;background:var(--page)}
+.setup-wizard .wizard-inner{max-width:760px;margin:0 auto}
+.setup-wizard .wizard-step{margin:0;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.setup-wizard h2{margin:4px 0 6px;font-size:26px}
+.setup-wizard h3{margin:20px 0 6px;font-size:15px}
+.setup-wizard .wizard-toggle{display:flex;flex-direction:row;align-items:center;gap:10px;font-size:17px;font-weight:700;margin:16px 0 4px}
+.setup-wizard .wizard-sub{border-top:1px solid var(--border);margin-top:18px;padding-top:6px}
+.setup-wizard .wizard-tool{display:flex;flex-direction:row;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin:6px 0;background:var(--surface);font-weight:400}
+.setup-wizard .wizard-tool .hint{margin:0 0 0 auto;font-family:Consolas,"Cascadia Mono",monospace;font-size:11px}
+.setup-wizard .muted{opacity:.45}
+.setup-wizard .wizard-test-row{display:flex;align-items:center;gap:12px;margin-top:14px}
+.setup-wizard .wizard-actions{position:sticky;bottom:0;background:linear-gradient(transparent,var(--page) 32%);padding:24px 0 8px}
+.setup-wizard #guide-result{margin:0}
+@media(max-width:720px){.setup-wizard{padding:24px 18px 48px}.setup-wizard h2{font-size:22px}}
+
 @media(max-width: 800px) {
   #nav { width: 146px; padding-left: 8px; padding-right: 8px; } main { padding: 22px 18px; }
   .prov .head { flex-wrap: wrap; }.prov .head .type { margin-left: 26px; }

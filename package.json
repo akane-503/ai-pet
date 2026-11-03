@@ -1,7 +1,7 @@
 {
   "name": "ai-pet",
   "productName": "AI 桌宠",
-  "version": "1.2.9",
+  "version": "1.3.2",
   "description": "AI 额度桌宠：DeepSeek / Codex / 中转站 / GLM 额度显示 + 模型提示器",
   "main": "src/main/main.js",
   "private": true,
@@ -12,7 +12,7 @@
   "scripts": {
     "start": "electron .",
     "pack": "node scripts/pack.js",
-    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js",
+    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js scripts/test-skills.js",
     "dist": "electron-builder --win nsis",
     "postdist": "node scripts/installer-latest.js",
     "dist:editions": "node scripts/build-editions.js"
@@ -74,7 +74,7 @@
       "installerIcon": "assets/app.ico",
       "uninstallerIcon": "assets/app.ico",
       "include": "build/installer.nsh",
-      "artifactName": "AI桌宠-Setup-${version}.${ext}",
+      "artifactName": "AI-Pet-Setup-${version}.${ext}",
       "deleteAppDataOnUninstall": false
     }
   }
