@@ -21,3 +21,5 @@ Copy-Item -Force "D:\01_Projects\Active\project-team-pm\skill\templates\*" ".tea
 或：`node D:/01_Projects/Active/project-team-pm/bin/team.mjs` 在任意子目录也能解析到本仓 `.team/`（向上查找）。
 
 历史副本：`D:/01_Projects/Active/dsh/lab/skills/project-team`（勿再当真相源）。
+
+> 注：.team/config.json 被仓库根 config.json* 规则忽略，故 controlPlane 字段以本文件为准写入 git；本地 config 可另存同名字段便于脚本读取。
