@@ -36,4 +36,9 @@
 - 决定：**选项 2，先别动**。
 - 理由：不打断用户当前桌宠实例；安装/注册表属于全局破坏性操作，留到用户确认的维护窗口。
 - 决策者：manager/主会话；时间：2026-11-04 21:17。
+- 执行结果（2026-11-04 21:37）：
+  - 在 `product-install` 工作树构建 1.3.3 安装包：`dist/installer/AI-Pet-Setup-1.3.3.exe`（112.6 MB）。
+  - `node scripts/verify-installer.js` **通过**：安装包/固定入口 sha256/latest.yml/koffi/解包版 smoke 共 5 步，11 项 smoke 检查全过，退出码 0。
+  - 未 `taskkill`、未静默安装、未写注册表；运行中的桌宠实例未受影响。
+  - 构建坑：工作树 `node_modules` 是链接，electron-builder 会漏收 koffi；临时复制真实 `node_modules` 构建后已恢复链接，工作树 `git status` 干净。
 - 后续：完整静默安装另开 D-002，必须由用户确认维护窗口后再做。
