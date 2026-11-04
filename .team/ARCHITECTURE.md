@@ -62,6 +62,12 @@ shared（geometry / launch / transfer-flow / usage）
 | 主检出（控制面） | 仓库根 | `main` |
 | 集成 | `D:\01_Projects\Active\ai-pet.team-worktrees\integration` | `team/integration` |
 | 任务 | `D:\01_Projects\Active\ai-pet.team-worktrees\T-00x` | `task/T-00x` |
+| 产品负责人 | `D:\01_Projects\Active\ai-pet.team-worktrees\product-<slug>` | `product/<slug>` |
+
+- 产品会话的 header cwd 仍是仓库根（侧栏归 ai-pet），但**生效工作目录**已用 `dsh-session-drag` 切到各自的 `product-<slug>` 工作树；文件改动只落在该工作树，不再共享主检出。
+- 产品 slug：`install` / `interaction` / `quota` / `transfer` / `notifications` / `settings`。
+- 主检出只保留控制面与 WIP 参考，产品会话不要直接改主检出；跨产品共享 `main.js`/`config.js` 时按租约串行，合并由 manager 走 `team/integration`。
+- 切换前的 WIP：`scratch/ai-pet-wip-20261104-201407/` + 分支 `wip/product-sessions-20261104`。
 
 - `node_modules` 由 `.team/config.json` 的 `linkDirs` 链进任务工作树；测试可直接跑，无需重装。
 - 任务分支只改业务代码；集成分支只由 `integrate` 写；主检出只由管理层提交 `.team/` 规格。
