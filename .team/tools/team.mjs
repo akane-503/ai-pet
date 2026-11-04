@@ -15,6 +15,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createEngagementApi, engagementBulletinSection } from './engagement.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -328,6 +329,7 @@ function readState(ctx) {
   st.crs ??= {};
   st.arbitrations ??= {};
   st.notes ??= [];
+  st.engagements ??= {};
   return st;
 }
 
@@ -529,6 +531,8 @@ function writeBulletin(ctx, st) {
     for (const n of st.notes.slice(-40)) lines.push(`- ${shortTime(n.at)} [${cell(n.by)}] ${cell(n.text)}`);
     lines.push('');
   }
+  const engLines = engagementBulletinSection(st, { cell, shortTime });
+  if (engLines.length) lines.push(...engLines);
   if (Object.values(st.crs).length) {
     lines.push('## 变更请求', '');
     lines.push('| CR | 标题 | 级别 | 状态 | 受影响任务 |');
@@ -588,6 +592,10 @@ function cmdInit(opts) {
     if (!fs.existsSync(ctx.teamDir)) throw new TeamError('NOT_INITIALIZED', `没有 .team：${ctx.teamDir}`, 2, '先正常 init');
     ensureDir(path.join(ctx.teamDir, 'tools', 'templates'));
     fs.copyFileSync(__filename, path.join(ctx.teamDir, 'tools', 'team.mjs'));
+    {
+      const engSrc = path.join(__dirname, 'engagement.mjs');
+      if (fs.existsSync(engSrc)) fs.copyFileSync(engSrc, path.join(ctx.teamDir, 'tools', 'engagement.mjs'));
+    }
     if (fs.existsSync(TEMPLATE_ROOT)) {
       for (const f of fs.readdirSync(TEMPLATE_ROOT)) {
         const src = path.join(TEMPLATE_ROOT, f);
@@ -638,6 +646,7 @@ function cmdInit(opts) {
   ensureDir(path.join(ctx.teamDir, 'DECISIONS'));
   ensureDir(path.join(ctx.teamDir, 'CHANGES'));
   ensureDir(path.join(ctx.teamDir, 'ARBITRATIONS'));
+  ensureDir(path.join(ctx.teamDir, 'engagements'));
   ensureDir(path.join(ctx.teamDir, 'tools'));
   ensureDir(path.join(ctx.localDir, 'leases'));
   ensureDir(path.join(ctx.localDir, 'sessions'));
@@ -677,6 +686,10 @@ function cmdInit(opts) {
 
   // 复制 CLI 与模板到项目内，保证无技能也能运行
   fs.copyFileSync(__filename, path.join(ctx.teamDir, 'tools', 'team.mjs'));
+  {
+    const engSrc = path.join(__dirname, 'engagement.mjs');
+    if (fs.existsSync(engSrc)) fs.copyFileSync(engSrc, path.join(ctx.teamDir, 'tools', 'engagement.mjs'));
+  }
   ensureDir(path.join(ctx.teamDir, 'tools', 'templates'));
   if (fs.existsSync(TEMPLATE_ROOT)) {
     for (const f of fs.readdirSync(TEMPLATE_ROOT)) {
@@ -737,6 +750,7 @@ function cmdInit(opts) {
       leases: {},
       crs: {},
       arbitrations: {},
+      engagements: {},
       notes: [],
     });
   }
@@ -1936,6 +1950,15 @@ function printHelp() {
   close --id T-001 --reason "..."
   clean --id T-001 [--force] [--delete-branch]
 
+外包（跨宿主）
+  engage new --title "..." --to codex|claude-code|zcode|cursor|dsh [--from cursor] [--task T-001] [--write "a;b"] [--verify "cmd"]
+  engage out --id E-001 [--dry-run]
+  engage start --id E-001 --by <host>
+  engage deliver --id E-001 --head <sha> [--files "a;b"] [--note "..."] [--dry-run]
+  engage accept --id E-001 [--dry-run] [--skip-gate] [--finalize] [--cr]
+  engage reject --id E-001 --reason "..."
+  engage cancel|list|show|brief --id E-001
+
 变更 / 仲裁
   cr new --title "..." --need "..." [--touches "src/core/**;src/shared/**"]
   cr impact --id CR-001
@@ -1983,6 +2006,16 @@ function main() {
     case 'clean': return cmdClean(opts);
     case 'handoff': return cmdHandoff(opts);
     case 'arbitrate': return cmdArbitrate(opts);
+    case 'engage': {
+      const sub = rest[0];
+      const subOpts = parseArgs(rest.slice(1));
+      const eng = createEngagementApi({
+        TeamError, mutate, appendEvent, jsonOut, table, must, splitList,
+        loadConfig, readState, ensureDir, atomicWrite, runShellToLog,
+        resolveContext, requireInitialized, matchAny, git,
+      });
+      return eng.dispatch(sub, subOpts);
+    }
     case 'cr': {
       const sub = rest[0];
       const subOpts = parseArgs(rest.slice(1));
