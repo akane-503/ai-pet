@@ -24,6 +24,7 @@
 
 ## 日常动作
 
+- **决策**：你是唯一决策者。安装/卸载、杀进程、注册表、删数据、force/reset、跨产品契约变更，执行会话必须先写 `.team/DECISIONS.md` 待裁决，不能直接弹用户选项；你读 DECISIONS 后写决定。
 - **接需求**：先做需求深拆（目标/非目标/验收/未知项），写 `.team/CHARTER.md`；用户确认后再拆任务。
 - **拆任务**：一个可验收结果一任务；写集尽量窄；跨模块用 `--module a,b`；提交任务书。
 - **派单**：`dispatch` → 读 `.team/local/sessions/T-00x.md` 全文 → `subagent`（`cwd` = 任务工作树）→ `link` 记录会话 id。
