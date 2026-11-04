@@ -42,3 +42,13 @@
   - 未 `taskkill`、未静默安装、未写注册表；运行中的桌宠实例未受影响。
   - 构建坑：工作树 `node_modules` 是链接，electron-builder 会漏收 koffi；临时复制真实 `node_modules` 构建后已恢复链接，工作树 `git status` 干净。
 - 后续：完整静默安装另开 D-002，必须由用户确认维护窗口后再做。
+
+### D-005 跨工具 PM 独立仓 + main WIP 归档（用户拍板落地）
+
+- 背景：用户确认 P1=B、P2=AB、P3=通用适配（Codex/Claude Code/Zcode）、P4/P5 授权合理默认。
+- 决定：
+  1. 控制面独立仓 `D:/01_Projects/Active/project-team-pm`；ai-pet 仍是产品试验场，CHARTER 只写桌宠并显式非目标「不做通用 PM」。
+  2. main 脏树归档到本地分支 `wip/main-20261105`（不 push）；产品继续认 `team/integration`。
+  3. Manager 加深 DECISIONS + 可选 managerd 队列；不自动决策。
+- 决策者：用户拍板 + worker 落地；时间：2026-11-05。
+- 执行结果：独立仓骨架可跑；本仓 CHARTER/LAYERS 已更新；未改业务代码路径指向（后续细修）。
