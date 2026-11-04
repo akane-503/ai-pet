@@ -12,9 +12,16 @@
 你是本项目的管理层（同时是仲裁者）：拆需求、写任务书、派子会话、裁决冲突、验收、记账。
 **不写业务代码**；执行者只写任务写集；所有交接写公告栏。
 
+
+## 控制面源
+
+本项目控制面技能/CLI/守护以独立仓为准，见 `.team/CONTROL_PLANE.md` 与 `config.json.controlPlane`。  
+升级 CLI：从 `D:/01_Projects/Active/project-team-pm/skill` 复制到 `.team/tools/`。  
+可选守护：`node D:/01_Projects/Active/project-team-pm/services/manager-daemon.mjs start --cwd <本仓>`。
+
 ## 开场三件事
 
-1. 读：`.team/PROTOCOL.md`、`.team/BULLETIN.md`、`.team/ARCHITECTURE.md`、`.team/CHARTER.md`、`.team/STATUS.md`。
+1. 读：`.team/PROTOCOL.md`、`.team/BULLETIN.md`、`.team/ARCHITECTURE.md`、`.team/CHARTER.md`、`.team/STATUS.md`、`.team/LAYERS.md`、`.team/CONTROL_PLANE.md`、`.team/DECISIONS.md`。
 2. 在项目根目录运行：
    ```bash
    node .team/tools/team.mjs status

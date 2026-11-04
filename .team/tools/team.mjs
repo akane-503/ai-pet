@@ -642,6 +642,7 @@ function cmdInit(opts) {
   ensureDir(path.join(ctx.localDir, 'leases'));
   ensureDir(path.join(ctx.localDir, 'sessions'));
   ensureDir(path.join(ctx.localDir, 'evidence'));
+  ensureDir(path.join(ctx.localDir, 'queue'));
 
   const vars = {
     PROJECT: project,
@@ -651,7 +652,7 @@ function cmdInit(opts) {
     GATE: gate || '（未设置：integrate 跳过门禁，建议 team.mjs init 时用 --gate 指定）',
   };
 
-  const templateFiles = ['PROTOCOL.md', 'CHARTER.md', 'ARCHITECTURE.md', 'BULLETIN.md', 'MANAGER.md'];
+  const templateFiles = ['PROTOCOL.md', 'CHARTER.md', 'ARCHITECTURE.md', 'BULLETIN.md', 'MANAGER.md', 'DECISIONS.md'];
   for (const name of templateFiles) {
     const target = path.join(ctx.teamDir, name);
     if (name === 'BULLETIN.md' || force || !fs.existsSync(target)) {
@@ -1581,6 +1582,23 @@ function cmdStatus(opts) {
   if (st.notes?.length) console.log(`\n最近公告：${st.notes[st.notes.length - 1].text}`);
 }
 
+
+function isRegisteredExtraWorktree(w, ctx, cfg, wtRoot) {
+  if (samePath(w.path, integrationWorktree(ctx, cfg))) return true;
+  const base = path.basename(w.path);
+  // P6: product-* worktrees are first-class product lanes (not task trees)
+  if (/^product[-_]/i.test(base)) return true;
+  const extras = []
+    .concat(cfg.allowedWorktrees || [])
+    .concat(cfg.productWorktrees || []);
+  for (const x of extras) {
+    const abs = path.isAbsolute(x) ? x : path.join(wtRoot, x);
+    if (samePath(w.path, abs) || base.toLowerCase() === String(x).toLowerCase()) return true;
+  }
+  if (w.branch && /^product\//.test(w.branch)) return true;
+  return false;
+}
+
 function cmdDoctor(opts) {
   const ctx = resolveContext();
   requireInitialized(ctx);
@@ -1636,16 +1654,17 @@ function cmdDoctor(opts) {
     if (l.expiresAt <= Date.now()) add('warn', 'EXPIRED_LEASE', `租约过期：${lid}（${l.taskId}）`);
   }
 
-  // 孤儿工作树
+  // 孤儿工作树（任务树 / 集成树 / product-* 及 config.allowedWorktrees 不算孤儿）
   const wtRoot = worktreeRoot(ctx, cfg);
   const known = new Set(Object.values(st.tasks).filter((t) => t.dispatch?.worktree).map((t) => normPath(t.dispatch.worktree).toLowerCase()));
   const allWt = worktreeList(ctx);
   for (const w of allWt) {
     if (!normPath(w.path).toLowerCase().startsWith(normPath(wtRoot).toLowerCase())) continue;
-    if (!known.has(normPath(w.path).toLowerCase()) && !samePath(w.path, integrationWorktree(ctx, cfg))) {
-      add('warn', 'ORPHAN_WORKTREE', `未登记的工作树：${w.path}`, '确认后可 git worktree remove');
-    }
+    if (known.has(normPath(w.path).toLowerCase())) continue;
+    if (isRegisteredExtraWorktree(w, ctx, cfg, wtRoot)) continue;
+    add('warn', 'ORPHAN_WORKTREE', `未登记的工作树：${w.path}`, '确认后可 git worktree remove；product-* 应被自动识别');
   }
+
   const intWt = integrationWorktree(ctx, cfg);
   if (!allWt.some((w) => samePath(w.path, intWt))) add('error', 'NO_INTEGRATION_WT', `集成工作树不存在：${intWt}`, 'team init --tools-only');
   else if (!isClean(intWt)) add('warn', 'INTEGRATION_DIRTY', '集成工作树有未提交改动');

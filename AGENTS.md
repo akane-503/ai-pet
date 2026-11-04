@@ -28,5 +28,34 @@ node .team/tools/team.mjs accept --id T-001
 
 派子会话时：`subagent` 的 `cwd` 用任务工作树，prompt 用 `.team/local/sessions/T-001.md` 的全文。
 在任务工作树里执行时，用会话简报里的**控制面绝对路径**调用 CLI；工作树里的 `.team/tools/team.mjs` 可能落后于控制面。
+
+控制面独立仓：D:/01_Projects/Active/project-team-pm（见 .team/CONTROL_PLANE.md）。刷新 CLI 从该仓 skill/scripts/team.mjs 复制到 .team/tools/。
 <!-- project-team:end -->
 
+<!-- project-team-pm:cursor:begin -->
+## project-team-pm（Cursor 适配）
+
+- 控制面：`.team/` + `node .team/tools/team.mjs`（源仓 `D:/01_Projects/Active/project-team-pm`）
+- Manager：顶层 Agent / Project；执行：Task，cwd = worktree，prompt = sessions 简报
+- 决策：`.team/DECISIONS.md`；可选 `managerd`
+- 安装：`node <pm>/adapters/_install.mjs --host cursor --repo <仓> [--skill]`
+<!-- project-team-pm:cursor:end -->
+
+<!-- project-team-pm:generic:begin -->
+## project-team-pm（通用 CLI 适配）
+
+- 任意能读 Markdown、跑 Node ≥ 20 的 Agent 可用
+- Manager：`.team/MANAGER.md` → `status` / `doctor` / `dispatch`
+- 执行者：claim → 写集 → submit；决策进 `DECISIONS.md`
+- 安装说明块：`node <pm>/adapters/_install.mjs --host generic --repo <仓>`
+- 源仓：`D:/01_Projects/Active/project-team-pm`
+<!-- project-team-pm:generic:end -->
+
+<!-- project-team-pm:dsh:begin -->
+## project-team-pm（DSH 适配）
+
+- 部署技能：`node <pm>/adapters/_install.mjs --host dsh --skill`
+  → `%USERPROFILE%\.dsh\skills\project-team`（junction 到独立仓 skill）
+- Manager：`subagent` 扇出；cwd = 任务 worktree；`link --session <id>`
+- 勿再用 `dsh/lab/skills/project-team` 当真相源（见 `docs/dual-source.md`）
+<!-- project-team-pm:dsh:end -->

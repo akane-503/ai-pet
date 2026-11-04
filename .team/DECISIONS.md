@@ -52,3 +52,12 @@
   3. Manager 加深 DECISIONS + 可选 managerd 队列；不自动决策。
 - 决策者：用户拍板 + worker 落地；时间：2026-11-05。
 - 执行结果：独立仓骨架可跑；本仓 CHARTER/LAYERS 已更新；未改业务代码路径指向（后续细修）。
+
+### D-006 控制面改指 project-team-pm + product-* 合法工作树（P6）
+
+- 背景：收口跨工具 PM；消除 doctor 对 product-* 的 ORPHAN 噪点；文档/技能路径改指独立仓。
+- 决定：
+  1. 真相源 = `D:/01_Projects/Active/project-team-pm`；本仓 `.team/tools/team.mjs` 从该仓 skill 复制刷新。
+  2. doctor 将 `product-*`（及 `config.allowedWorktrees`）视为合法非任务树，不再报 ORPHAN_WORKTREE。
+- 决策者：用户授权收口 + worker；时间：2026-11-05。
+- 执行结果：status/doctor 可用；ORPHAN 六条消失；仅可能剩 INTEGRATION_DIRTY（既有）。

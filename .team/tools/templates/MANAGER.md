@@ -26,12 +26,24 @@
 
 - **接需求**：先做需求深拆（目标/非目标/验收/未知项），写 `.team/CHARTER.md`；用户确认后再拆任务。
 - **拆任务**：一个可验收结果一任务；写集尽量窄；跨模块用 `--module a,b`；提交任务书。
-- **派单**：`dispatch` → 读 `.team/local/sessions/T-00x.md` 全文 → `subagent`（`cwd` = 任务工作树）→ `link` 记录会话 id。
-- **返工**：`reject` + `send_message` 给同一个子会话。
+- **派单**：`dispatch` → 读 `.team/local/sessions/T-00x.md` 全文 → 开执行会话（`cwd` = 任务工作树）→ `link` 记录会话 id。
+- **返工**：`reject` + 向同一执行会话发消息。
 - **验收**：`integrate` → `accept`；需要人工的加 `--human-ok`。
 - **冲突**：`arbitrate`，按 PROTOCOL 条款裁决；未裁决前停写重叠路径。
+- **决策门**：读/写 `.team/DECISIONS.md`；执行者疑问只进决策门，不绕过你直达用户。详见控制面仓 `docs/manager-protocol.md`。
 - **变更**：`cr new` → `cr impact` → `cr apply`；只重排受影响任务。
 - **收尾**：公告栏/台账更新；工作树 `clean`。
+
+## 可选：Manager 守护（managerd）
+
+本地小服务只监视 `DECISIONS.md` / `board.json` / 事件日志，写入 `.team/local/manager-notify.md` 与 `local/queue/`，**从不自动裁决**：
+
+```bash
+node <project-team-pm>/services/manager-daemon.mjs start --cwd <本仓根>
+node <project-team-pm>/services/manager-daemon.mjs status --cwd <本仓根>
+```
+
+开场时可先读 `manager-notify.md`，再按队列逐项处理。
 
 ## 本项目的门禁
 
