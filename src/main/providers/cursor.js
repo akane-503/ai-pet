@@ -3,6 +3,7 @@
 const path = require('path');
 const { base, num, toEpochSec, fmtCountdown } = require('./util');
 const cursorModel = require('../cursor-model');
+const safeStorage = require('../cursor-safe-storage');
 
 const DB = path.join(process.env.APPDATA || '', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
 
@@ -11,8 +12,9 @@ function readToken(dbPath) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try { const row = db.prepare("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'").get(); return row ? String(row.value) : ''; } finally { db.close(); }
 }
-// cookie 需要 “用户ID::token”，用户ID 在 JWT sub 的 | 后面
+// cookie 需要 “用户ID::token”，用户ID 在 JWT sub 的 | 后面；入参必须是已解密 JWT
 function cookieFor(token) {
+  if (safeStorage.isEncrypted(token)) throw new Error('cookieFor 收到未解密的 cursor-safe-storage 密文');
   const payload = JSON.parse(Buffer.from(token.split('.')[1] || '', 'base64url').toString('utf8'));
   return 'WorkosCursorSessionToken=' + String(payload.sub || '').split('|').pop() + '%3A%3A' + token;
 }
@@ -47,10 +49,15 @@ async function fetchSnapshot(p) {
   let token = '';
   let cookie = p.cookie ? (p.cookie.includes('=') ? p.cookie : 'WorkosCursorSessionToken=' + p.cookie) : '';
   if (!cookie) {
-    if (!require('fs').existsSync(p.dbPath || DB)) { s.error = '没找到 Cursor 本机登录数据（未安装或路径不对）'; return s; }
-    try { token = readToken(p.dbPath || DB); } catch (e) { s.error = '读不到 Cursor 登录信息：' + e.message; return s; }
-    if (!token) { s.error = 'Cursor 未登录'; return s; }
-    try { cookie = cookieFor(token); } catch (_) { s.error = 'Cursor 登录 token 格式不认识'; return s; }
+    const dbPath = p.dbPath || DB;
+    if (!require('fs').existsSync(dbPath)) { s.error = '没找到 Cursor 本机登录数据（未安装或路径不对）'; return s; }
+    let raw = '';
+    try { raw = readToken(dbPath); } catch (e) { s.error = '读不到 Cursor 登录信息：' + e.message; return s; }
+    if (!raw) { s.error = 'Cursor 未登录'; return s; }
+    const resolved = safeStorage.resolveAccessToken(raw, { dbPath, localStatePath: p.localStatePath });
+    if (!resolved.ok) { s.error = resolved.error; return s; }
+    token = resolved.token;
+    try { cookie = cookieFor(token); } catch (e) { s.error = 'Cursor 登录 token 无法拼 Cookie：' + e.message; return s; }
   }
   let u = null;
   if (token) {
@@ -58,16 +65,26 @@ async function fetchSnapshot(p) {
       const rpc = (method) => request('https://api2.cursor.sh/aiserver.v1.DashboardService/' + method, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Connect-Protocol-Version': '1' }, body: JSON.stringify(method === 'GetCurrentPeriodUsage' ? { includePooledUsage: true } : {}), timeoutMs: 20000 });
       const [usage, info] = await Promise.all([rpc('GetCurrentPeriodUsage'), rpc('GetPlanInfo')]);
       if (usage.ok && usage.data && info.ok && info.data && info.data.planInfo) u = parseDashboardUsage(usage.data, info.data);
+      else if (!usage.ok) {
+        const why = usage.status === 401 || usage.status === 403
+          ? 'Bearer JWT 被拒绝（HTTP ' + usage.status + '）'
+          : 'GetCurrentPeriodUsage HTTP ' + usage.status;
+        s.extra.dashboardError = why;
+      }
       if (u && !u.windows.length && u.shared) {
         s.plan = u.plan; s.extra.shared = true;
         s.error = '已识别 ' + (u.plan || '共享订阅') + '，但接口暂未返回周用量；请稍后刷新或查看官方用量页';
         return s;
       }
-    } catch (_) { /* 老账户仍可尝试网页接口；新账户在下方拒绝旧月度值 */ }
+    } catch (e) { s.extra.dashboardError = 'Dashboard RPC 异常：' + (e && e.message || e); }
   }
   if (!u || !u.windows.length) {
     const r = await request('https://cursor.com/api/usage-summary', { headers: { Cookie: cookie, Accept: 'application/json' }, timeoutMs: 20000 });
-    if (!r.ok || !r.data) { s.error = `用量接口 HTTP ${r.status}`; return s; }
+    if (!r.ok || !r.data) {
+      const hint = s.extra.dashboardError ? `；Dashboard：${s.extra.dashboardError}` : '';
+      s.error = `用量接口 HTTP ${r.status}${hint}`;
+      return s;
+    }
     if (/^(plus|premium|super)$/i.test(r.data.membershipType || '')) { s.error = '共享周额度接口暂不可用，未采用旧月度数据；请稍后刷新或检查 Cursor 登录状态'; return s; }
     u = parseUsage(r.data);
   }
@@ -84,4 +101,4 @@ async function fetchSnapshot(p) {
   if (u.auto !== null || u.api !== null) s.lines.push(`Auto ${Math.round(u.auto || 0)}% · API ${Math.round(u.api || 0)}%`);
   return s;
 }
-module.exports = { fetchSnapshot, parseUsage, parseDashboardUsage, cookieFor };
+module.exports = { fetchSnapshot, parseUsage, parseDashboardUsage, cookieFor, readToken };

@@ -681,6 +681,74 @@ test('cursor usage prefers reported percent, falls back to overall ratio, builds
   assert.equal(cookieFor(jwt), 'WorkosCursorSessionToken=user_42%3A%3A' + jwt);
 });
 
+test('cursor-safe-storage decrypts v1 AES-GCM envelopes before cookieFor / Bearer', () => {
+  const ss = require('../src/main/cursor-safe-storage');
+  const { cookieFor } = require('../src/main/providers/cursor');
+  const jwt = ['eyJhbGciOiJub25lIn0', Buffer.from(JSON.stringify({ sub: 'auth0|user_safe' })).toString('base64url'), 'sig'].join('.');
+  assert.equal(ss.resolveAccessToken(jwt).token, jwt);
+  assert.match(ss.resolveAccessToken('not-a-token').error, /格式不认识/);
+  assert.match(ss.resolveAccessToken('cursor-safe-storage:v9:abc').error, /版本不支持/);
+  assert.throws(() => cookieFor('cursor-safe-storage:v1:abc'), /未解密/);
+
+  const key = Buffer.alloc(32, 7);
+  const sealed = ss.encodeCursorSafeStorageV1(jwt, key);
+  assert.ok(ss.isEncrypted(sealed));
+  assert.equal(ss.windowsAesGcmDecrypt(Buffer.from(sealed.slice(ss.PREFIX_V1.length), 'base64'), key), jwt);
+  const resolved = ss.resolveAccessToken(sealed, { key });
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.encrypted, true);
+  assert.equal(resolved.token, jwt);
+  assert.equal(cookieFor(resolved.token), 'WorkosCursorSessionToken=user_safe%3A%3A' + jwt);
+
+  const wrong = ss.resolveAccessToken(sealed, { key: Buffer.alloc(32, 9) });
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.error, /解密 Cursor 登录 token 失败|AES-GCM/);
+});
+
+test('cursor fetchSnapshot decrypts sealed accessToken then calls Dashboard with Bearer JWT', async () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const ss = require('../src/main/cursor-safe-storage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-cursor-safe-'));
+  try {
+    const jwt = ['eyJhbGciOiJub25lIn0', Buffer.from(JSON.stringify({ sub: 'auth0|user_live' })).toString('base64url'), 'sig'].join('.');
+    const key = Buffer.alloc(32, 3);
+    const sealed = ss.encodeCursorSafeStorageV1(jwt, key);
+    const file = path.join(dir, 'state.vscdb');
+    const db = new DatabaseSync(file);
+    db.exec('create table ItemTable(key text, value text)');
+    db.prepare('insert into ItemTable values(?,?)').run('cursorAuth/accessToken', sealed);
+    db.close();
+
+    const auths = [];
+    const impl = mockedModule('src/main/providers/cursor.js', {
+      '../cursor-safe-storage': {
+        ...ss,
+        resolveAccessToken(raw, opts) {
+          return ss.resolveAccessToken(raw, { ...opts, key });
+        },
+      },
+      '../http': {
+        request: async (url, opts) => {
+          if (url.endsWith('GetCurrentPeriodUsage')) {
+            auths.push(opts.headers.Authorization);
+            return { ok: true, data: { billingCycleEnd: '1794041660437', planUsage: { totalPercentUsed: 12.5, autoPercentUsed: 1, apiPercentUsed: 2 } } };
+          }
+          if (url.endsWith('GetPlanInfo')) {
+            return { ok: true, data: { planInfo: { planName: 'Pro', includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_MONTHLY' } } };
+          }
+          throw new Error('unexpected ' + url);
+        },
+      },
+    });
+    const s = await impl.fetchSnapshot({ id: 'cursor', type: 'cursor', name: 'sealed', dbPath: file });
+    assert.equal(s.ok, true);
+    assert.equal(s.windows[0].usedPercent, 12.5);
+    assert.deepEqual(auths, ['Bearer ' + jwt]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('custom json provider reads dotted paths', () => {
   const { parse } = require('../src/main/providers/custom');
   const d = { data: { q: { used: 30, total: 120 }, wallet: [{ left: '8.5' }] } };
