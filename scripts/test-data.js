@@ -1531,14 +1531,15 @@ test('non-git projects in a home-directory session resolve to the dominant folde
   try {
     // 复刻 2026/10/23 20:04 的翻车现场：WSL 家目录里的 Claude 改 E 盘文档，项目不是 git 仓库，
     // 提到的路径多在 tmp/output 子目录里——以前 projectRoot 返回 null，交接文件掉进全局 .handoff
-    const proj = path.join(dir, 'E', 'School', '微专业');
+    // 目录名用 ASCII：GitHub windows-latest runner 对中文路径编码不稳定（main CI 已长期红）
+    const proj = path.join(dir, 'E', 'School', 'micro-major');
     const tmp = path.join(proj, 'tmp'), out = path.join(proj, 'output');
     fs.mkdirSync(tmp, { recursive: true }); fs.mkdirSync(out, { recursive: true });
     const tool = (p) => ({ role: 'tool', full: JSON.stringify({ cmd: `cat ${p}` }) });
     const items = [];
     for (let i = 0; i < 4; i++) items.push(tool(path.join(tmp, `t${i}.html`)));
     for (let i = 0; i < 2; i++) items.push(tool(path.join(out, `o${i}.pdf`)));
-    // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，微专业全盖住
+    // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，项目根全盖住
     assert.equal(h.dominantDir(items, 'Ubuntu'), proj);
     assert.equal(h.commonDir(items, 'Ubuntu'), tmp, 'commonDir 会偏深到子目录，dominantDir 才是项目根');
     // 家目录 cwd（broad）不再直接放弃：兜到 dominantDir，交接文件落回项目根
