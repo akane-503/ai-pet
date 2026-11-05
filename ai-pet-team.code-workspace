@@ -1,23 +1,19 @@
 {
   "folders": [
     {
-      "name": "【Manager】管板",
+      "name": "【1·Manager】管板",
       "path": "D:/01_Projects/Active/ai-pet"
     },
     {
-      "name": "【Exec·T-020】会话地图",
+      "name": "【2】T-020 已完成",
       "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-020"
     },
     {
-      "name": "【Exec·T-021】控制面指针",
+      "name": "【3】T-021 已完成",
       "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-021"
-    },
-    {
-      "name": "【Integration】集成",
-      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/integration"
     }
   ],
   "settings": {
-    "window.title": "【Team】ai-pet 分会话"
+    "window.title": "【ai-pet Team】已清板 · 无需点窗"
   }
 }
