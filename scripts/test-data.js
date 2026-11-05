@@ -1545,7 +1545,12 @@ test('non-git projects in a home-directory session resolve to the dominant folde
     for (let i = 0; i < 4; i++) items.push(tool(path.join(tmp, `t${i}.html`)));
     for (let i = 0; i < 2; i++) items.push(tool(path.join(out, `o${i}.pdf`)));
     // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，项目根全盖住
-    assert.equal(h.dominantDir(items, 'Ubuntu'), proj);
+    const gotDom = h.dominantDir(items, 'Ubuntu');
+    assert.equal(
+      gotDom,
+      proj,
+      `dominantDir=${gotDom}; projExists=${fs.existsSync(proj)}; tmpExists=${fs.existsSync(tmp)}; sample=${items[0].full}; home=${os.homedir()}; tmpdir=${os.tmpdir()}`,
+    );
     assert.equal(h.commonDir(items, 'Ubuntu'), tmp, 'commonDir 会偏深到子目录，dominantDir 才是项目根');
     // 家目录 cwd（broad）不再直接放弃：兜到 dominantDir，交接文件落回项目根
     assert.equal(h.projectRoot(items, 'Ubuntu-24.04', '/home/akane503'), proj);
