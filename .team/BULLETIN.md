@@ -1,7 +1,7 @@
 # 公告栏（BULLETIN）
 
 > 项目：ai-pet · 唯一交接渠道 · 由 `team` CLI 维护，勿手改
-> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-05T09:16:32.548Z
+> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-05T17:07:39.125Z
 
 ## 已完成
 
@@ -21,6 +21,7 @@
 - 11-05 16:59 [manager] 布局：只开 ai-pet-team.code-workspace 一窗三根。现在 A=T-020，然后 B=T-021。其它窗关掉。
 - 11-05 17:11 [manager] 全自动：scripts/team-auto.ps1。GUI 窗口可忽略。
 - 11-05 17:16 [manager] 全自动：scripts/team-auto.ps1。GUI 窗口可忽略。
+- 11-06 01:07 [manager] 工作区治理：task docs 全部回流 main（T-001/002/020/021，docs/ 4 份）；6 个 task worktree 已移除；本地杂物归档 archive/（HANDOFF×8、1.3.3 构建暂存）；product/* 差异盘点见 docs/product-branches-audit.md——product/quota 是最大汇合点，回流建议待批准。
 
 ## 外包 / 血缘（engagements）
 
