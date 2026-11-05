@@ -115,6 +115,7 @@ let handoffSerial = 0;
 let externalHandoffAt = 0;       // 已播报的 latest.txt mtime
 let externalHandoffSuppressUntil = 0; // 本进程自己写交接后的短抑制窗
 let externalHandoffTimer = null;
+let externalHandoffMemory = {};  // engageKey → { phase, file, at }；外包收件箱节流
 let foreground = { character: null, at: 0 };           // 当前前台窗口对应的 agent
 let knownAgentWins = null;                              // 上次看到的 agent 窗口 hwnd -> 角色
 function charOf(key) {
@@ -1145,36 +1146,19 @@ function handoffAction({ action, id } = {}) {
   if (action === 'close') { job.closed = true; sendPet('cmd', { name: 'hide' }); }
 }
 
-/** 外部写入 ~/.handoff/latest.txt（如 project-team engage --live）时弹出桌宠交接 UI + 系统通知 + 托盘提示 */
+/** 外部写入 ~/.handoff/latest.txt（如 project-team engage --live）：按 engage 去重，仅状态变化进收件箱 */
 function announceExternalHandoff(latest) {
+  const decision = handoffExternal.decideAnnounce(latest, externalHandoffMemory);
+  externalHandoffMemory = handoffExternal.rememberAnnounce(externalHandoffMemory, decision, latest);
+  if (decision.channel === 'skip') return;
+
   const repoRoot = handoff.workspaceOf(latest.file) || '';
   const view = handoffExternal.viewFromLatest(latest, handoff.goalOf, { repoRoot });
   if (repoRoot) view.repoRoot = repoRoot;
   const note = handoffExternal.notificationFromLatest(latest, handoff.goalOf);
   const tool = handoffExternal.toolForExternalHandoff(latest.file);
-  const nc = config.data.notify || {};
-  const quiet = notifyEngine.inQuietHours(nc.quietHours);
-  if (nc.toast !== false && !quiet && Notification.isSupported()) {
-    try {
-      const t = new Notification({ title: note.title, body: note.body, icon: path.join(ASSETS, 'app.ico'), silent: !nc.sound });
-      t.on('click', () => { setPetVisible(true); sendPet('handoff', view); });
-      t.show();
-    } catch (e) { log('external handoff toast', e.message); }
-  }
-  const n = {
-    id: `ext-h-${latest.at}`,
-    ts: Date.now(),
-    title: note.title,
-    body: note.body,
-    read: false,
-    kind: 'handoff-external',
-    file: latest.file,
-    host: tool,
-  };
-  state.data.notifications.unshift(n);
-  state.data.notifications = state.data.notifications.slice(0, 300);
-  state.saveSoon();
-  sendSettings('notification', n);
+
+  // 交回闭环：无论 channel，都刷新 lastHandoffJob，保证右键「已交回」可用
   lastHandoffJob = {
     id: view.id,
     target: view.target,
@@ -1191,12 +1175,63 @@ function announceExternalHandoff(latest) {
     steps: [{ s: 'ok' }, { s: 'ok' }, { s: 'ok' }, { s: 'ok' }],
     project: repoRoot || '',
   };
+
+  if (decision.channel === 'silent') {
+    log('external handoff silent', decision.reason, latest.file, 'host', tool);
+    return;
+  }
+
+  if (decision.channel === 'bubble') {
+    setPetVisible(true);
+    lastSaid = JSON.stringify(view);
+    sendPet('handoff', view);
+    if (tray) tray.setToolTip(`AI 桌宠 · 交接更新：${note.body}`);
+    updateTrayMenu();
+    log('external handoff bubble', decision.reason, latest.file, 'host', tool);
+    return;
+  }
+
+  // inbox：toast + 合并同 engage 收件箱行 + 气泡
+  const nc = config.data.notify || {};
+  const quiet = notifyEngine.inQuietHours(nc.quietHours);
+  if (nc.toast !== false && !quiet && Notification.isSupported()) {
+    try {
+      const t = new Notification({ title: note.title, body: note.body, icon: path.join(ASSETS, 'app.ico'), silent: !nc.sound });
+      t.on('click', () => { setPetVisible(true); sendPet('handoff', view); });
+      t.show();
+    } catch (e) { log('external handoff toast', e.message); }
+  }
+  const draft = {
+    id: `ext-h-${decision.key || latest.at}`,
+    title: note.title,
+    body: note.body,
+    kind: 'handoff-external',
+    file: latest.file,
+    host: tool,
+    engageId: view.engageId || '',
+    engageKey: decision.key || '',
+    phase: decision.phase,
+  };
+  const up = handoffExternal.upsertHandoffNotification(state.data.notifications, draft);
+  state.data.notifications = up.list;
+  state.saveSoon();
+  sendSettings('notification', up.notification);
   setPetVisible(true);
   lastSaid = JSON.stringify(view);
   sendPet('handoff', view);
   if (tray) tray.setToolTip(`AI 桌宠 · 新交接：${note.body}`);
   updateTrayMenu();
-  log('external handoff', latest.file, 'host', tool, view.canMarkReturned ? 'can-return' : '');
+  log('external handoff', decision.reason, latest.file, 'host', tool, view.canMarkReturned ? 'can-return' : '', up.merged ? 'merged' : 'new');
+}
+
+function pruneExternalHandoffInbox() {
+  const before = (state.data.notifications || []).length;
+  const pruned = handoffExternal.pruneHandoffInbox(state.data.notifications);
+  if (!pruned.removed) return 0;
+  state.data.notifications = pruned.list;
+  state.saveSoon();
+  log('pruned handoff inbox', pruned.removed, 'of', before, 'kept handoff', pruned.kept);
+  return pruned.removed;
 }
 
 function pollExternalHandoff() {
@@ -1714,6 +1749,7 @@ app.whenReady().then(() => {
   createPetWindow();
   if (firstRun) openSettings('tools');
   checkActivity();
+  pruneExternalHandoffInbox();
   markExternalHandoffBaseline();
   if (!externalHandoffTimer) externalHandoffTimer = setInterval(pollExternalHandoff, 2000);
   // 首次：只把本机装了的预设 agent 加进来
