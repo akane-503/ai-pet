@@ -1594,6 +1594,21 @@ function cmdStatus(opts) {
   }
   if (overlaps.length) console.log(`\n⚠ 活跃任务写集重叠：${overlaps.join(', ')}（并行前需仲裁/覆盖授权）`);
   if (st.notes?.length) console.log(`\n最近公告：${st.notes[st.notes.length - 1].text}`);
+  const engs = Object.values(st.engagements || {}).sort((a, b) => a.id.localeCompare(b.id));
+  if (engs.length) {
+    console.log('\n外包脉络：');
+    table(['包', '方向', '状态', '任务', '卡点'], engs.map((e) => {
+      let next = '—';
+      if (e.status === 'draft') next = 'out';
+      else if (e.status === 'out') next = 'start/' + e.toHost;
+      else if (e.status === 'in-progress') next = 'deliver';
+      else if (e.status === 'delivered') next = 'accept[--integrate]';
+      else if (e.status === 'rejected') next = 'out/cancel';
+      else if (e.status === 'accepted' && e.inbound?.integrate?.ok) next = 'integrated';
+      else if (e.status === 'accepted') next = 'integrate?';
+      return [e.id, e.fromHost + '→' + e.toHost, e.status, e.taskId || '—', next];
+    }));
+  }
 }
 
 
@@ -1955,7 +1970,7 @@ function printHelp() {
   engage out --id E-001 [--dry-run]
   engage start --id E-001 --by <host>
   engage deliver --id E-001 --head <sha> [--files "a;b"] [--note "..."] [--dry-run]
-  engage accept --id E-001 [--dry-run] [--skip-gate] [--finalize] [--cr]
+  engage accept --id E-001 [--dry-run] [--skip-gate] [--finalize] [--cr] [--integrate]
   engage reject --id E-001 --reason "..."
   engage cancel|list|show|brief --id E-001
 
@@ -2013,6 +2028,7 @@ function main() {
         TeamError, mutate, appendEvent, jsonOut, table, must, splitList,
         loadConfig, readState, ensureDir, atomicWrite, runShellToLog,
         resolveContext, requireInitialized, matchAny, git,
+        integrate: cmdIntegrate,
       });
       return eng.dispatch(sub, subOpts);
     }

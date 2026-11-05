@@ -137,7 +137,7 @@ function renderBrief(ctx, e, api) {
     '# ... 在写集内提交 ...',
     `node .team/tools/team.mjs engage deliver --id ${e.id} --head <sha> --note "做了什么"`,
     '# 发包 Manager：',
-    `node .team/tools/team.mjs engage accept --id ${e.id}   # 或 reject --reason "..."`,
+    `node .team/tools/team.mjs engage accept --id ${e.id} --integrate`,
     '```',
     '',
     adapterInstallHint(e.toHost, pm),
@@ -179,6 +179,81 @@ function writeEngageFiles(ctx, e, api) {
   api.atomicWrite(path.join(dir, 'ADAPTER.md'), adapterInstallHint(e.toHost, api.loadConfig(ctx).controlPlane?.home) + '\n');
 }
 
+function generateLaunchArtifacts(ctx, e, api) {
+  const dir = engDir(ctx, e.id);
+  api.ensureDir(dir);
+  const st = api.readState(ctx);
+  const task = e.taskId && st.tasks[e.taskId];
+  const wt = task?.dispatch?.worktree || ctx.controlRoot;
+  const briefAbs = path.join(dir, 'BRIEF.md');
+  const host = e.toHost;
+  const hostHints = {
+    cursor: '- Cursor：新 Agent/Task，cwd = worktree；prompt = BRIEF.md',
+    codex: '- Codex：新 thread，working directory = worktree；粘贴 BRIEF',
+    'claude-code': '- Claude Code：打开 worktree；粘贴或 @ BRIEF；遵守 CLAUDE.md',
+    zcode: '- Zcode：新会话，cwd = worktree；首条 = BRIEF',
+    dsh: '- DSH：subagent cwd = worktree；prompt = BRIEF；然后 link --session',
+    generic: '- 通用：任意 Agent，cwd = worktree，读 BRIEF',
+    other: '- 其他宿主：cwd = worktree，读 BRIEF',
+  };
+  const md = [
+    `# Launch · ${e.id} → ${host}`,
+    '',
+    '## Checklist（可 dry-run：只读脚本不自动弹 GUI）',
+    '',
+    `1. 安装适配：\`node <pm>/adapters/_install.mjs --host ${host} --repo <仓> --skill\``,
+    `2. 打开宿主 **${host}**，cwd：`,
+    `   \`${wt}\``,
+    `3. 粘贴 BRIEF 全文：\`${briefAbs}\``,
+    '4. 完成后：`engage deliver` → Manager `engage accept --integrate`',
+    '',
+    '## 宿主提示',
+    '',
+    hostHints[host] || hostHints.other,
+    '',
+    '## 一键打印（本机）',
+    '',
+    '```powershell',
+    `pwsh -NoProfile -File "${path.join(dir, 'launch.ps1').replace(/\\/g, '/')}"`,
+    '```',
+    '',
+  ].join('\n');
+  api.atomicWrite(path.join(dir, 'LAUNCH.md'), md + '\n');
+
+  const ps1Lines = [
+    `# project-team-pm launch skeleton · ${e.id} → ${host}`,
+    '# Prints steps only; does not auto-start GUI.',
+    `$ErrorActionPreference = 'Continue'`,
+    `Write-Host '=== engage launch ${e.id} (${host}) ==='`,
+    `Write-Host 'cwd: ${wt.replace(/'/g, "''")}'`,
+    `Write-Host 'brief: ${briefAbs.replace(/'/g, "''")}'`,
+    `$brief = '${briefAbs.replace(/'/g, "''")}'`,
+    `if (Test-Path -LiteralPath $brief) { Get-Content -LiteralPath $brief -TotalCount 15 | ForEach-Object { Write-Host $_ } }`,
+    `Write-Host 'Next: open ${host} with cwd above and paste BRIEF.md'`,
+    '',
+  ];
+  api.atomicWrite(path.join(dir, 'launch.ps1'), ps1Lines.join('\n'));
+
+  const shLines = [
+    '#!/usr/bin/env bash',
+    `# launch skeleton · ${e.id} → ${host}`,
+    'set -euo pipefail',
+    `echo "=== engage launch ${e.id} (${host}) ==="`,
+    `echo "cwd: ${wt}"`,
+    `echo "brief: ${briefAbs}"`,
+    `echo "Next: open ${host} with that cwd and paste BRIEF.md"`,
+    '',
+  ];
+  api.atomicWrite(path.join(dir, 'launch.sh'), shLines.join('\n'));
+
+  return {
+    launchMd: path.join(dir, 'LAUNCH.md'),
+    launchPs1: path.join(dir, 'launch.ps1'),
+    launchSh: path.join(dir, 'launch.sh'),
+    worktree: wt,
+  };
+}
+
 export function engagementBulletinSection(st, { cell, shortTime }) {
   const list = Object.values(st.engagements || {}).sort((a, b) => a.id.localeCompare(b.id));
   if (!list.length) return [];
@@ -196,7 +271,7 @@ export function engagementBulletinSection(st, { cell, shortTime }) {
       case 'draft': next = 'engage out'; break;
       case 'out': next = `等 ${e.toHost} start`; break;
       case 'in-progress': next = '等 deliver'; break;
-      case 'delivered': next = 'manager accept/reject'; break;
+      case 'delivered': next = 'accept [--integrate]'; break;
       case 'rejected': next = '改完再 out 或 cancel'; break;
       default: next = '—';
     }
@@ -283,8 +358,7 @@ export function createEngagementApi(api) {
 
     const result = mutate(ctx, (st) => {
       const e = mustEngage(st, id);
-      assertTransition(e.status === 'rejected' ? 'rejected' : e.status, 'out');
-      // allow rejected→out via assert on rejected; if status is rejected, transition ok
+      assertTransition(e.status, 'out');
       if (e.taskId && st.tasks[e.taskId] && !dry) {
         const t = st.tasks[e.taskId];
         for (const [lid, l] of Object.entries(st.leases)) {
@@ -311,17 +385,25 @@ export function createEngagementApi(api) {
         dryRun: dry,
         briefPath: path.join('engagements', id, 'BRIEF.md'),
         adapterPath: path.join('engagements', id, 'ADAPTER.md'),
+        launchPath: path.join('engagements', id, 'LAUNCH.md'),
       };
       appendEvent(ctx, { event: 'engage.out', id, to: e.toHost, dryRun: dry });
       return e;
     });
     writeEngageFiles(ctx, result, api);
+    const launch = generateLaunchArtifacts(ctx, result, api);
+    mutate(ctx, (st) => {
+      const e = mustEngage(st, id);
+      e.outbound = { ...(e.outbound || {}), launchMd: launch.launchMd, launchPs1: launch.launchPs1, worktree: launch.worktree };
+    });
     const briefAbs = path.join(engDir(ctx, id), 'BRIEF.md');
-    if (opts.json) return jsonOut({ engagement: result, brief: briefAbs, dryRun: dry });
+    if (opts.json) return jsonOut({ engagement: readState(ctx).engagements[id], brief: briefAbs, launch, dryRun: dry });
     console.log(`外包已出站 ${id} → ${result.toHost}${dry ? ' (dry-run)' : ''}`);
     console.log(`  Brief：${briefAbs}`);
     console.log(`  适配：${path.join(engDir(ctx, id), 'ADAPTER.md')}`);
-    console.log('将 BRIEF.md 贴给接包方会话；接包方：engage start → 改写集 → engage deliver');
+    console.log(`  Launch：${launch.launchMd}`);
+    console.log(`  Script：${launch.launchPs1}`);
+    console.log('将 BRIEF.md 贴给接包方；或 dry-run：pwsh -File launch.ps1');
   }
 
   function cmdStart(opts) {
@@ -374,7 +456,7 @@ export function createEngagementApi(api) {
     writeEngageFiles(ctx, result, api);
     if (opts.json) return jsonOut(result);
     console.log(`${id} 已交付 (delivered)${dry ? ' dry-run' : ''}`);
-    console.log(`下一步：engage accept --id ${id}  或  engage reject --id ${id} --reason "..."`);
+    console.log(`下一步：engage accept --id ${id} [--integrate]  或  engage reject --id ${id} --reason "..."`);
   }
 
   function cmdAccept(opts) {
@@ -417,10 +499,50 @@ export function createEngagementApi(api) {
       return e;
     });
     writeEngageFiles(ctx, result, api);
-    if (opts.json) return jsonOut({ engagement: result, gate });
+
+    const wantIntegrate = opts.integrate === true
+      || opts['auto-integrate'] === true
+      || (opts.integrate !== false && cfg.engage?.autoIntegrate === true);
+    let integrateResult = null;
+    if (wantIntegrate && result.taskId) {
+      if (dry) {
+        integrateResult = { dryRun: true, taskId: result.taskId, skipped: true };
+        mutate(ctx, (st) => {
+          const e = mustEngage(st, id);
+          e.inbound = { ...(e.inbound || {}), integrate: integrateResult };
+        });
+        console.log(`[dry-run] 将 integrate ${result.taskId}（未执行）`);
+      } else if (typeof api.integrate === 'function') {
+        try {
+          api.integrate({ id: result.taskId, gate: opts.gate, quiet: opts.json === true || opts.quiet === true });
+          integrateResult = { ok: true, taskId: result.taskId };
+          mutate(ctx, (st) => {
+            const e = mustEngage(st, id);
+            e.inbound = { ...(e.inbound || {}), integrate: integrateResult };
+            appendEvent(ctx, { event: 'engage.integrate', id, taskId: result.taskId });
+          });
+        } catch (err) {
+          integrateResult = { ok: false, taskId: result.taskId, error: err.message, code: err.code };
+          mutate(ctx, (st) => {
+            const e = mustEngage(st, id);
+            e.inbound = { ...(e.inbound || {}), integrate: integrateResult };
+          });
+          console.error(`[engage] accept 成功但 integrate 失败：${err.message}`);
+          if (err.hint) console.error(`next: ${err.hint}`);
+          if (opts['fail-on-integrate'] === true) throw err;
+        }
+      } else {
+        console.log(`下一步手动：node .team/tools/team.mjs integrate --id ${result.taskId}`);
+      }
+    }
+
+    if (opts.json) return jsonOut({ engagement: readState(ctx).engagements[id], gate, integrate: integrateResult });
     console.log(`${id} 已接受 (accepted)${dry ? ' dry-run' : ''}`);
-    if (!gate.skipped) console.log(`  门禁：通过`);
-    if (result.taskId) console.log(`  关联任务 ${result.taskId} → 待验收；integrate 走原任务流`);
+    if (!gate.skipped) console.log('  门禁：通过');
+    if (result.taskId && !wantIntegrate) {
+      console.log(`  关联任务 ${result.taskId} → 待验收；可加 --integrate 或手动 integrate`);
+    }
+    if (wantIntegrate && integrateResult?.ok) console.log(`  已自动 integrate ${result.taskId}`);
   }
 
   function cmdReject(opts) {
@@ -471,9 +593,15 @@ export function createEngagementApi(api) {
     const rows = Object.values(st.engagements || {}).sort((a, b) => a.id.localeCompare(b.id));
     if (opts.json) return jsonOut({ engagements: rows });
     if (!rows.length) { console.log('暂无外包包。engage new --title "..." --to codex'); return; }
-    table(['ID', '标题', '方向', '状态', '任务', '更新'], rows.map((e) => [
-      e.id, e.title, `${e.fromHost}→${e.toHost}`, e.status, e.taskId || '—', e.updatedAt,
-    ]));
+    table(['ID', '标题', '方向', '状态', '任务', '卡点', '更新'], rows.map((e) => {
+      let next = '—';
+      if (e.status === 'draft') next = 'out';
+      else if (e.status === 'out') next = 'start';
+      else if (e.status === 'in-progress') next = 'deliver';
+      else if (e.status === 'delivered') next = 'accept[--integrate]';
+      else if (e.status === 'rejected') next = 'out/cancel';
+      return [e.id, e.title, `${e.fromHost}→${e.toHost}`, e.status, e.taskId || '—', next, e.updatedAt];
+    }));
   }
 
   function cmdShow(opts) {
