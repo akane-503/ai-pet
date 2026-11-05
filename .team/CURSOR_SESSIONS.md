@@ -1,4 +1,4 @@
-﻿# Cursor 分会话（ai-pet）
+# Cursor 分会话（ai-pet）
 
 > 适配材料源：`D:/01_Projects/Active/project-team-pm/adapters/cursor/`  
 > 控制面：见 `CONTROL_PLANE.md`。本文件给人 / Agent 复制开场用。
