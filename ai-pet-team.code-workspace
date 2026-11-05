@@ -1,19 +1,12 @@
 {
   "folders": [
     {
-      "name": "【1·Manager】管板",
+      "name": "ai-pet",
       "path": "D:/01_Projects/Active/ai-pet"
-    },
-    {
-      "name": "【2】T-020 已完成",
-      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-020"
-    },
-    {
-      "name": "【3】T-021 已完成",
-      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-021"
     }
   ],
   "settings": {
-    "window.title": "【ai-pet Team】已清板 · 无需点窗"
+    "window.title": "ai-pet",
+    "window.titleSeparator": " · "
   }
 }

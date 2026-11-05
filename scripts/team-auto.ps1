@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
   Fully automatic team ops for ai-pet. No GUI by default.
+  Ensures ai-pet-team.code-workspace stays a single repo-root folder.
 #>
 [CmdletBinding()]
 param([switch]$Gui)
@@ -8,6 +9,7 @@ param([switch]$Gui)
 $ErrorActionPreference = 'Stop'
 $Root = 'D:\01_Projects\Active\ai-pet'
 $Team = Join-Path $Root '.team\tools\team.mjs'
+$Workspace = Join-Path $Root 'ai-pet-team.code-workspace'
 
 Push-Location $Root
 Write-Host '=== auto status ==='
@@ -47,12 +49,29 @@ if (Test-Path $boardPath) {
   }
 }
 
-node $Team note --text '全自动：scripts/team-auto.ps1。GUI 窗口可忽略。' 2>&1 | Out-Host
+node $Team note --text '全自动：scripts/team-auto.ps1。默认单根 workspace=仓根 ai-pet。' 2>&1 | Out-Host
 node $Team status 2>&1 | Out-Host
 node $Team doctor 2>&1 | Out-Host
 Pop-Location
 
-node -e "const fs=require('fs'); const pet='D:/01_Projects/Active/ai-pet'; fs.writeFileSync(pet+'/ai-pet-team.code-workspace', JSON.stringify({folders:[{name:'【1·Manager】管板',path:pet},{name:'【2】T-020 已完成',path:'D:/01_Projects/Active/ai-pet.team-worktrees/T-020'},{name:'【3】T-021 已完成',path:'D:/01_Projects/Active/ai-pet.team-worktrees/T-021'}],settings:{'window.title':'【ai-pet Team】已清板 · 无需点窗'}},null,2)+'\n','utf8');"
+# Always keep the default workspace = one folder (repo root). T-020/T-021 done → not in sidebar.
+@'
+{
+  "folders": [
+    {
+      "name": "ai-pet",
+      "path": "D:/01_Projects/Active/ai-pet"
+    }
+  ],
+  "settings": {
+    "window.title": "ai-pet",
+    "window.titleSeparator": " · "
+  }
+}
+'@ | Set-Content -LiteralPath $Workspace -Encoding utf8NoBOM
 
-if ($Gui) { Start-Process cursor -ArgumentList @('-n', (Join-Path $Root 'ai-pet-team.code-workspace')) | Out-Null }
+if ($Gui) {
+  Start-Process cursor -ArgumentList @('-r', $Workspace) | Out-Null
+}
 Write-Host '=== auto done ==='
+Write-Host "workspace: $Workspace (1 folder: ai-pet)"

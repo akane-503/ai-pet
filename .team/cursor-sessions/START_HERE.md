@@ -1,17 +1,7 @@
-# 【ai-pet Team】你现在只需看这里
+# START_HERE · 侧栏已收拢
 
-## 现在只做 A，然后 B
+打开：`ai-pet-team.code-workspace`（或跑 `scripts/open-cursor-sessions.ps1`）。
 
-1. **A（现在）**：侧栏点 **【3·然后】T-021 控制面指针** → Agent **Ctrl+V**（剪贴板=T-021）→ 发送 → claim / 写 `docs/control-plane.md` / submit  
-2. **B（然后）**：侧栏点 **【1·Manager】管板** → 对 **T-020**（已待验收）跑 `integrate` 再 `accept`  
-3. 其它散窗全部关掉；只要标题含 **【ai-pet Team】** 的这一窗
+左侧应只有 **1 项：`ai-pet`**（仓根）。
 
-> T-020 文档任务已提交（待验收）；先把 T-021 做完，或先 Manager 收 T-020——按上面顺序即可。
-
-## 侧栏三根
-
-| 侧栏 | 状态 |
-|---|---|
-| 【1·Manager】管板 | B：收 T-020 |
-| 【2·现在做】T-020 会话地图 | 已交，可先不点 |
-| 【3·然后】T-021 控制面指针 | **A：现在点这里** |
+T-020 / T-021 已完成，勿再打开 `.team/cursor-sessions/02-*` / `03-*` 或把它们加回多根。
