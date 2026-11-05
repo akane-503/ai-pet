@@ -1,9 +1,11 @@
 # 管理层会话启动说明（ai-pet）
 
-> 这是本项目的管理层/仲裁者入口。新开一个**工作区为 ai-pet** 的 DSH 会话后，把下面这段作为第一句：
+> 这是本项目的管理层/仲裁者入口。新开一个**工作区为 ai-pet 根检出**的 Cursor Agent（或其它宿主）后，把下面这段作为第一句：
+>
+> Cursor 分会话全貌见 `.team/CURSOR_SESSIONS.md`；可复制模板在 `.team/cursor-prompts/`。
 
 ```text
-读 .team/MANAGER.md，接管 ai-pet 的项目管理；先读 PROTOCOL/BULLETIN/ARCHITECTURE/CHARTER/STATUS，
+读 .team/MANAGER.md，接管 ai-pet 的项目管理；先读 PROTOCOL/BULLETIN/ARCHITECTURE/CHARTER/STATUS、CURSOR_SESSIONS，
 再跑 node .team/tools/team.mjs status 和 doctor，用中文回报现状与下一步。不要改业务代码。
 ```
 

@@ -1,7 +1,14 @@
 # 公告栏（BULLETIN）
 
 > 项目：ai-pet · 唯一交接渠道 · 由 `team` CLI 维护，勿手改
-> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-05T01:56:12.504Z
+> 协议见 [PROTOCOL.md](PROTOCOL.md)；状态真相在 `.team/local/board.json`；生成于 2026-11-05T08:21:40.402Z
+
+## 待认领
+
+| 任务 | 认领者（会话） | 状态 | 证据 | 阻塞 / 下一步 | 更新 |
+|---|---|---|---|---|---|
+| T-020 docs: Cursor session map for ai-pet | — | 待认领 | — | 等 manager dispatch | 11-05 16:21 |
+| T-021 docs: control-plane pointer | — | 待认领 | — | 等 manager dispatch | 11-05 16:21 |
 
 ## 已完成
 
