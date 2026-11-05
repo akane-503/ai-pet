@@ -1545,14 +1545,10 @@ test('non-git projects in a home-directory session resolve to the dominant folde
     for (let i = 0; i < 4; i++) items.push(tool(path.join(tmp, `t${i}.html`)));
     for (let i = 0; i < 2; i++) items.push(tool(path.join(out, `o${i}.pdf`)));
     // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，项目根全盖住
-    const gotDom = h.dominantDir(items, 'Ubuntu');
-    assert.equal(
-      gotDom,
-      proj,
-      `dominantDir=${gotDom}; projExists=${fs.existsSync(proj)}; tmpExists=${fs.existsSync(tmp)}; sample=${items[0].full}; home=${os.homedir()}; tmpdir=${os.tmpdir()}`,
-    );
+    assert.equal(h.dominantDir(items, 'Ubuntu'), proj);
     assert.equal(h.commonDir(items, 'Ubuntu'), tmp, 'commonDir 会偏深到子目录，dominantDir 才是项目根');
     // 家目录 cwd（broad）不再直接放弃：兜到 dominantDir，交接文件落回项目根
+    // （无 WSL 时 \\wsl.localhost\... 不存在，仍应 dominantDir，见 projectRoot linuxHome 分支）
     assert.equal(h.projectRoot(items, 'Ubuntu-24.04', '/home/akane503'), proj);
     // 会话跑在 ~/.handoff 里（全局交接文件被转接时的目录）也一样能找回项目
     assert.equal(h.projectRoot(items, 'Ubuntu', path.join(os.homedir(), '.handoff')), proj);
