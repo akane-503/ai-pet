@@ -1529,19 +1529,26 @@ test('non-git projects in a home-directory session resolve to the dominant folde
   const h = require('../src/main/handoff-api');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dom-'));
   try {
-    // 复刻 2026/10/23 20:04 的翻车现场：WSL 家目录里的 Claude 改 E 盘文档，项目不是 git 仓库，
+    // 复刻 2026/10/23 20:04 的翻车现场：WSL 家目录里的 Claude 改文档，项目不是 git 仓库，
     // 提到的路径多在 tmp/output 子目录里——以前 projectRoot 返回 null，交接文件掉进全局 .handoff
-    const proj = path.join(dir, 'E', 'School', '微专业');
+    // 夹具用 /mnt/<drive>/...（pathsIn 会转成盘符路径）；避免 JSON 里 Windows 反斜杠在 GHA 上抽径失败
+    const proj = path.join(dir, 'School', 'micro-major');
     const tmp = path.join(proj, 'tmp'), out = path.join(proj, 'output');
     fs.mkdirSync(tmp, { recursive: true }); fs.mkdirSync(out, { recursive: true });
-    const tool = (p) => ({ role: 'tool', full: JSON.stringify({ cmd: `cat ${p}` }) });
+    const toMnt = (winPath) => {
+      const m = /^([A-Za-z]):[\\/](.*)$/.exec(path.resolve(winPath));
+      assert.ok(m, `expected absolute windows path: ${winPath}`);
+      return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`;
+    };
+    const tool = (p) => ({ role: 'tool', full: JSON.stringify({ cmd: `cat ${toMnt(p)}` }) });
     const items = [];
     for (let i = 0; i < 4; i++) items.push(tool(path.join(tmp, `t${i}.html`)));
     for (let i = 0; i < 2; i++) items.push(tool(path.join(out, `o${i}.pdf`)));
-    // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，微专业全盖住
+    // dominantDir 取「盖住七成路径的最深目录」：tmp 只有三分之二，项目根全盖住
     assert.equal(h.dominantDir(items, 'Ubuntu'), proj);
     assert.equal(h.commonDir(items, 'Ubuntu'), tmp, 'commonDir 会偏深到子目录，dominantDir 才是项目根');
     // 家目录 cwd（broad）不再直接放弃：兜到 dominantDir，交接文件落回项目根
+    // （无 WSL 时 \\wsl.localhost\... 不存在，仍应 dominantDir，见 projectRoot linuxHome 分支）
     assert.equal(h.projectRoot(items, 'Ubuntu-24.04', '/home/akane503'), proj);
     // 会话跑在 ~/.handoff 里（全局交接文件被转接时的目录）也一样能找回项目
     assert.equal(h.projectRoot(items, 'Ubuntu', path.join(os.homedir(), '.handoff')), proj);
@@ -2585,4 +2592,72 @@ test('writeReturnReceipt writes HANDOFF-RETURN + repo RETURNED.md only (no engag
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test('external handoff decideAnnounce throttles same engage; inbox only on state change', () => {
+  const {
+    decideAnnounce, rememberAnnounce, dedupeKey, phaseOf, metaFromHandoff,
+  } = require('../src/main/handoff-external');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-throttle-'));
+  const outFile = path.join(dir, 'HANDOFF-E-TH.md');
+  const outFile2 = path.join(dir, 'HANDOFF-E-TH-b.md');
+  const retFile = path.join(dir, 'HANDOFF-RETURN-E-TH.md');
+  const metaLine = (extra) => `<!-- ai-pet-handoff:${JSON.stringify({ host: 'codex', engageId: 'E-TH', ...extra })} -->`;
+  fs.writeFileSync(outFile, `# HANDOFF — E-TH\n${metaLine({})}\n`, 'utf8');
+  fs.writeFileSync(outFile2, `# HANDOFF — E-TH\n${metaLine({})}\n`, 'utf8');
+  fs.writeFileSync(retFile, `# HANDOFF — return E-TH\n${metaLine({ kind: 'return', returned: true })}\n`, 'utf8');
+  try {
+    assert.equal(phaseOf(metaFromHandoff(outFile), outFile), 'out');
+    assert.equal(phaseOf(metaFromHandoff(retFile), retFile), 'returned');
+    assert.equal(dedupeKey(metaFromHandoff(outFile), outFile), 'engage:E-TH');
+    let mem = {};
+    const d1 = decideAnnounce({ file: outFile, at: 1 }, mem);
+    assert.equal(d1.channel, 'inbox');
+    assert.equal(d1.reason, 'dispatched');
+    mem = rememberAnnounce(mem, d1, { file: outFile, at: 1 });
+    const d2 = decideAnnounce({ file: outFile, at: 2 }, mem);
+    assert.equal(d2.channel, 'silent', 'same file refresh must not inbox');
+    const d3 = decideAnnounce({ file: outFile2, at: 3 }, mem);
+    assert.equal(d3.channel, 'bubble', 'same phase rewrite → bubble only');
+    mem = rememberAnnounce(mem, d3, { file: outFile2, at: 3 });
+    const d4 = decideAnnounce({ file: retFile, at: 4 }, mem);
+    assert.equal(d4.channel, 'inbox');
+    assert.equal(d4.reason, 'state-change');
+    assert.equal(d4.phase, 'returned');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('upsert + prune handoff inbox collapses spam without touching other kinds', () => {
+  const { upsertHandoffNotification, pruneHandoffInbox } = require('../src/main/handoff-external');
+  let list = [
+    { id: 'bal', kind: 'balance', title: '额度', body: '低', ts: 1, read: false },
+    { id: 'h1', kind: 'handoff-external', title: '收到 AI 交接', body: 'E-A → codex', engageKey: 'engage:E-A', ts: 10, read: false },
+    { id: 'h2', kind: 'handoff-external', title: '收到 AI 交接', body: 'E-A → codex', engageKey: 'engage:E-A', ts: 9, read: false },
+    { id: 'h3', kind: 'handoff-external', title: '收到 AI 交接', body: 'E-B → cursor', engageId: 'E-B', file: 'D:\\x\\HANDOFF-E-B.md', ts: 8, read: false },
+    { id: 'news', kind: 'news', title: '新闻', body: 'x', ts: 2, read: true },
+  ];
+  const up = upsertHandoffNotification(list, {
+    title: '外包已交回',
+    body: 'E-A → codex',
+    engageKey: 'engage:E-A',
+    engageId: 'E-A',
+    phase: 'returned',
+    file: 'D:\\ret.md',
+  });
+  assert.equal(up.merged, true);
+  assert.equal(up.notification.title, '外包已交回');
+  assert.equal(up.notification.id, 'h1', 'keep stable id when merging');
+  assert.equal(up.list[0].title, '外包已交回');
+  list = up.list;
+  // inject another duplicate of E-B style without engageKey
+  list.push({ id: 'h4', kind: 'handoff-external', title: '收到 AI 交接', body: 'E-B → cursor', engageId: 'E-B', file: 'D:\\x\\HANDOFF-E-B.md', ts: 7, read: false });
+  const pruned = pruneHandoffInbox(list);
+  assert.ok(pruned.removed >= 1);
+  const handoffs = pruned.list.filter((n) => n.kind === 'handoff-external');
+  assert.equal(handoffs.length, 2, 'one row per engage');
+  assert.ok(pruned.list.some((n) => n.kind === 'balance'));
+  assert.ok(pruned.list.some((n) => n.kind === 'news'));
+  assert.equal(pruned.list.filter((n) => n.kind === 'balance' || n.kind === 'news').length, 2);
 });

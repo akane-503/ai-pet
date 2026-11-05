@@ -723,7 +723,7 @@ function dominantDir(items, distro) {
   }
   const need = Math.max(3, Math.ceil(paths.length * 0.7));
   return [...counts.entries()]
-    .filter(([k, n]) => n >= need && !tooBroad(k) && !internalPath(k) && fs.existsSync(k))
+    .filter(([k, n]) => n >= need && !tooBroad(k) && !internalPath(original.get(k) || k) && fs.existsSync(original.get(k) || k))
     .sort((a, b) => depth.get(b[0]) - depth.get(a[0]) || counts.get(b[0]) - counts.get(a[0]))
     .map((e) => original.get(e[0]))[0] || null;
 }
@@ -777,7 +777,11 @@ function projectRoot(items, distro, cwd) {
   }
   const active = [...explicit.entries()].filter(([, v]) => v.n >= 2).sort((a, b) => b[1].n - a[1].n || b[1].at - a[1].at)[0];
   if (active) return active[0];
-  if (!cwd || !fs.existsSync(cwd)) return winner;
+  // cwd 不存在时仍可能是「家目录 / 工具内部目录」语义（无 WSL 的 CI、尚未建的 ~/.handoff）
+  if (!cwd || !fs.existsSync(cwd)) {
+    if (linuxHome || (cwd && internal(cwd))) return winner || dominantDir(items, distro) || commonDir(items, distro);
+    return winner;
+  }
   // ZCode 的 cwd 是它自己的工作区（~/.zcode/workspace/default），不是项目：这时用「被提到最多的目录」
   if (internal(cwd)) return winner || dominantDir(items, distro) || commonDir(items, distro);
   const home = os.homedir();

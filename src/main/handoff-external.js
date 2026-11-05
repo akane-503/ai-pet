@@ -196,6 +196,150 @@ function notificationFromLatest(latest, goalOf) {
   };
 }
 
+function isReturnMeta(meta, file) {
+  return !!(meta && (meta.returned || meta.kind === 'return')) || /RETURN/i.test(path.basename(file || ''));
+}
+
+/** Lifecycle phase for throttle: out (派出/需你处理) vs returned (交回). */
+function phaseOf(meta, file) {
+  return isReturnMeta(meta, file) ? 'returned' : 'out';
+}
+
+/** Stable key for same engage / same HANDOFF — used to merge inbox rows. */
+function dedupeKey(meta, file) {
+  const id = meta && String(meta.engageId || '').trim();
+  if (id) return `engage:${id}`;
+  if (file) {
+    try {
+      return `file:${path.resolve(String(file)).toLowerCase()}`;
+    } catch (_) {
+      return `file:${String(file).toLowerCase()}`;
+    }
+  }
+  return '';
+}
+
+/**
+ * Decide how loud to announce a latest.txt bump.
+ * inbox = toast + 收件箱（派出 / 交回 / 状态变化）
+ * bubble = 只刷新桌宠气泡（同 phase 换文件）
+ * silent = 仅记 memory / lastJob（同文件刷屏）
+ *
+ * @param {{ file?: string, at?: number } | null} latest
+ * @param {Record<string, { phase: string, file: string, at?: number }>} memory
+ */
+function decideAnnounce(latest, memory = {}) {
+  if (!latest || !latest.file) return { channel: 'skip', phase: '', key: '', reason: 'no-file' };
+  const meta = metaFromHandoff(latest.file);
+  const key = dedupeKey(meta, latest.file);
+  const phase = phaseOf(meta, latest.file);
+  const prev = key ? memory[key] : null;
+  if (!prev) {
+    return {
+      channel: 'inbox',
+      phase,
+      key,
+      reason: phase === 'returned' ? 'returned' : 'dispatched',
+    };
+  }
+  if (prev.phase !== phase) {
+    return { channel: 'inbox', phase, key, reason: 'state-change' };
+  }
+  let sameFile = false;
+  try {
+    sameFile = path.resolve(String(prev.file || '')) === path.resolve(String(latest.file));
+  } catch (_) {
+    sameFile = String(prev.file || '') === String(latest.file);
+  }
+  if (sameFile) return { channel: 'silent', phase, key, reason: 'same-file-refresh' };
+  return { channel: 'bubble', phase, key, reason: 'same-phase-rewrite' };
+}
+
+function rememberAnnounce(memory, decision, latest) {
+  const next = memory && typeof memory === 'object' ? { ...memory } : {};
+  if (!decision || !decision.key || decision.channel === 'skip' || !latest || !latest.file) return next;
+  next[decision.key] = { phase: decision.phase, file: latest.file, at: latest.at };
+  return next;
+}
+
+/**
+ * One inbox row per engageKey: merge in place (newest on top).
+ * @returns {{ list: object[], notification: object, merged: boolean }}
+ */
+function upsertHandoffNotification(notifications, draft) {
+  const list = Array.isArray(notifications) ? notifications.slice() : [];
+  const key = draft && draft.engageKey ? String(draft.engageKey) : '';
+  const idx = key
+    ? list.findIndex((n) => n && n.kind === 'handoff-external' && n.engageKey === key)
+    : -1;
+  if (idx >= 0) {
+    const prev = list[idx];
+    const notification = {
+      ...prev,
+      ...draft,
+      id: prev.id,
+      kind: 'handoff-external',
+      engageKey: key,
+      ts: Date.now(),
+      read: false,
+    };
+    list.splice(idx, 1);
+    list.unshift(notification);
+    return { list: list.slice(0, 300), notification, merged: true };
+  }
+  const notification = {
+    ...draft,
+    id: (draft && draft.id) || `ext-h-${Date.now()}`,
+    kind: 'handoff-external',
+    ts: Date.now(),
+    read: false,
+  };
+  list.unshift(notification);
+  return { list: list.slice(0, 300), notification, merged: false };
+}
+
+function inboxKeyOf(n) {
+  if (!n || n.kind !== 'handoff-external') return '';
+  if (n.engageKey) return String(n.engageKey);
+  if (n.engageId) return `engage:${n.engageId}`;
+  if (n.file) {
+    try {
+      return `file:${path.resolve(String(n.file)).toLowerCase()}`;
+    } catch (_) {
+      return `file:${String(n.file).toLowerCase()}`;
+    }
+  }
+  return `legacy:${n.title || ''}|${n.body || ''}`;
+}
+
+/**
+ * Collapse historical outsource spam; never touch non-handoff-external rows.
+ * Keeps newest row per engage/file key (list is newest-first).
+ * @returns {{ list: object[], removed: number, kept: number }}
+ */
+function pruneHandoffInbox(notifications) {
+  const list = Array.isArray(notifications) ? notifications : [];
+  const keep = [];
+  const seen = new Set();
+  let removed = 0;
+  let kept = 0;
+  for (const n of list) {
+    if (!n || n.kind !== 'handoff-external') {
+      keep.push(n);
+      continue;
+    }
+    const key = inboxKeyOf(n);
+    if (seen.has(key)) {
+      removed += 1;
+      continue;
+    }
+    seen.add(key);
+    kept += 1;
+    keep.push(n.engageKey ? n : { ...n, engageKey: key });
+  }
+  return { list: keep, removed, kept };
+}
+
 /** Tool id for takeoverPrompt — prefer HANDOFF meta host over hard-coded cursor. */
 function toolForExternalHandoff(file, fallback = 'cursor') {
   const meta = metaFromHandoff(file);
@@ -210,6 +354,13 @@ module.exports = {
   toolForExternalHandoff,
   writeReturnReceipt,
   repoRootFromBrief,
+  phaseOf,
+  dedupeKey,
+  decideAnnounce,
+  rememberAnnounce,
+  upsertHandoffNotification,
+  pruneHandoffInbox,
+  inboxKeyOf,
   LATEST,
   CACHE,
 };
