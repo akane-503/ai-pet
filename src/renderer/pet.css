@@ -77,7 +77,9 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .handoff-steps i.current { background: var(--text); animation: handoff-pulse 1.8s ease-in-out infinite; }
 @keyframes handoff-pulse { 50% { opacity: .35; } }
 .handoff-actions { display: flex; justify-content: center; gap: calc(var(--u) * 20); }
-.bubble.handoff .handoff-actions, .bubble.handoff .handoff-steps { display: none; }
+.bubble.handoff .handoff-steps { display: none; }
+.bubble.handoff:not(.handoff-actions-on) .handoff-actions { display: none; }
+.bubble.handoff.handoff-actions-on .handoff-actions { display: flex; }
 .handoff-actions button { border: 0; border-radius: 999px; padding: calc(var(--u) * 9) calc(var(--u) * 25); color: var(--text); background: color-mix(in srgb, var(--line) 9%, white); font: 600 calc(var(--u) * 36)/1.25 "Microsoft YaHei UI", sans-serif; cursor: pointer; transition: background .15s, transform .15s; }
 .handoff-actions button:first-child { color: white; background: var(--line); }
 .handoff-actions button:hover { transform: translateY(-1px); filter: brightness(1.12); }

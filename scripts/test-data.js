@@ -107,9 +107,15 @@ test('pet right-click exposes copy, cancel and hide without squeezing controls i
   menu.find(x=>x.label?.includes('复制交接指令')).click();assert.equal(actions[0].action,'copy');assert.equal(actions[0].id,9);
   menu.find(x=>x.label?.includes('取消交接')).click();assert.equal(actions[1].action,'cancel');
   menu.find(x=>x.label==='收起交接提示').click();assert.equal(actions[2].action,'close');
+  assert.equal(menu.some(x=>x.label?.includes('已交回')),false);
   ctx.lastHandoffJob=ctx.handoffJob;ctx.handoffJob=null;
   const completed=vm.runInContext('petMenuTemplate()',ctx);
   assert.ok(completed.some(x=>x.label?.includes('复制交接指令')));assert.equal(completed.some(x=>x.label?.includes('取消交接')),false);
+  ctx.lastHandoffJob={id:11,text:'engage',canMarkReturned:true,engageId:'E-1'};
+  const retMenu=vm.runInContext('petMenuTemplate()',ctx);
+  assert.ok(retMenu.some(x=>x.label?.includes('已交回')));
+  retMenu.find(x=>x.label?.includes('已交回')).click();
+  assert.equal(actions.at(-1).action,'mark-returned');assert.equal(actions.at(-1).id,11);
 });
 
 test('handoff checks focus again before delayed Enter and reports whether it was sent', async () => {
@@ -2542,7 +2548,41 @@ test('external handoff picks host from ai-pet-handoff meta (not hard-coded curso
     const v = viewFromLatest({ file, at: 99 }, () => 'E-HOST');
     assert.equal(v.host, 'codex');
     assert.match(v.detail, /codex/);
+    assert.equal(v.canMarkReturned, true);
+    assert.equal(v.returned, false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeReturnReceipt writes HANDOFF-RETURN + repo RETURNED.md only (no engagements.json)', () => {
+  const { writeReturnReceipt, metaFromHandoff, viewFromLatest } = require('../src/main/handoff-external');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-return-repo-'));
+  const teamEng = path.join(repo, '.team', 'engagements');
+  fs.mkdirSync(teamEng, { recursive: true });
+  const engJson = path.join(repo, '.team', 'engagements.json');
+  fs.writeFileSync(engJson, JSON.stringify({ version: 1, items: [{ id: 'E-PET', state: 'out' }] }, null, 2));
+  const before = fs.readFileSync(engJson, 'utf8');
+  try {
+    const r = writeReturnReceipt({ engageId: 'E-PET', repoRoot: repo, host: 'codex' });
+    assert.ok(fs.existsSync(r.handoffFile));
+    assert.match(path.basename(r.handoffFile), /HANDOFF-RETURN-E-PET/);
+    const body = fs.readFileSync(r.handoffFile, 'utf8');
+    assert.match(body, /已交回/);
+    assert.match(body, /"kind":"return"/);
+    assert.match(body, /"source":"ai-pet"/);
+    assert.ok(r.returnedMarker);
+    assert.ok(fs.existsSync(r.returnedMarker));
+    assert.match(fs.readFileSync(r.returnedMarker, 'utf8'), /source: ai-pet/);
+    assert.equal(fs.readFileSync(engJson, 'utf8'), before, 'pet must not mutate engagements.json');
+    const meta = metaFromHandoff(r.handoffFile);
+    assert.equal(meta.returned, true);
+    assert.equal(meta.engageId, 'E-PET');
+    const v = viewFromLatest({ file: r.handoffFile, at: 1 }, () => 'E-PET');
+    assert.equal(v.returned, true);
+    assert.equal(v.canMarkReturned, false);
+    assert.equal(v.heading, '外包已交回');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });
