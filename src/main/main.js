@@ -807,7 +807,13 @@ function petMenuTemplate() {
   if (QUOTA_ONLY) return all;
   const job = handoffJob || lastHandoffJob;
   return [
-    ...(job && job.text ? [{ label: '📋 复制交接指令', click: () => handoffAction({ action: 'copy', id: job.id }) }, { label: '收起交接提示', click: () => handoffAction({ action: 'close', id: job.id }) }, ...(handoffJob ? [{ label: '⏹ 取消交接', click: () => handoffAction({ action: 'cancel', id: job.id }) }] : []), { type: 'separator' }] : []),
+    ...(job && job.text ? [
+      { label: '📋 复制交接指令', click: () => handoffAction({ action: 'copy', id: job.id }) },
+      ...(job.canMarkReturned ? [{ label: '✅ 已交回', click: () => handoffAction({ action: 'mark-returned', id: job.id }) }] : []),
+      { label: '收起交接提示', click: () => handoffAction({ action: 'close', id: job.id }) },
+      ...(handoffJob ? [{ label: '⏹ 取消交接', click: () => handoffAction({ action: 'cancel', id: job.id }) }] : []),
+      { type: 'separator' },
+    ] : []),
     ...all.slice(1, 3), // 打开其他 / 交接（「打开当前工具」双击桌宠就够了）
     { type: 'separator' },
     ...all.slice(7, 9), // 摸头 / 消息
@@ -1080,13 +1086,70 @@ function handoffAction({ action, id } = {}) {
       clipboard.writeText(handoff.takeoverPrompt(job.file, { tool, home: os.homedir() }));
     } else clipboard.writeText(job.text);
   }
+  if (action === 'mark-returned') {
+    if (!job.canMarkReturned || !job.engageId) return;
+    try {
+      const repoRoot = job.repoRoot || handoff.workspaceOf(job.file) || handoffExternal.repoRootFromBrief(
+        handoffExternal.metaFromHandoff(job.file).briefPath,
+      ) || '';
+      const receipt = handoffExternal.writeReturnReceipt({
+        engageId: job.engageId,
+        repoRoot,
+        host: job.host || '',
+      });
+      // Suppress re-announce of our own RETURN write; update bubble in place.
+      externalHandoffSuppressUntil = Date.now() + 4000;
+      try {
+        const st = fs.statSync(receipt.handoffFile);
+        externalHandoffAt = Math.max(externalHandoffAt || 0, st.mtimeMs);
+      } catch (_) { /* ignore */ }
+      job.canMarkReturned = false;
+      job.returned = true;
+      job.target = '已交回';
+      const view = {
+        id: job.id,
+        target: '已交回',
+        heading: '已写交回回执',
+        detail: receipt.returnedMarker
+          ? `${job.engageId} · 发包方 status 将收标记`
+          : `${job.engageId} · 仅 IPC；缺仓库根时请手工 engage returned`,
+        project: job.project || '',
+        step: 4,
+        steps: ['ok', 'ok', 'ok', 'ok'],
+        done: true,
+        cancelled: false,
+        failed: false,
+        manualSource: false,
+        canCopy: true,
+        autoCloseMs: 12000,
+        external: true,
+        file: receipt.handoffFile,
+        host: job.host || '',
+        engageId: job.engageId,
+        returned: true,
+        canMarkReturned: false,
+        repoRoot,
+      };
+      lastSaid = JSON.stringify(view);
+      setPetVisible(true);
+      sendPet('handoff', view);
+      if (tray) tray.setToolTip(`AI 桌宠 · 已交回：${job.engageId}`);
+      updateTrayMenu();
+      log('engage return receipt', receipt.handoffFile, receipt.returnedMarker || '(no repo marker)');
+    } catch (e) {
+      log('mark-returned failed', e.message);
+    }
+    return;
+  }
   if (action === 'cancel' && job === handoffJob) { job.cancelled = true; job.draftController?.abort(); finishJob(job); }
   if (action === 'close') { job.closed = true; sendPet('cmd', { name: 'hide' }); }
 }
 
 /** 外部写入 ~/.handoff/latest.txt（如 project-team engage --live）时弹出桌宠交接 UI + 系统通知 + 托盘提示 */
 function announceExternalHandoff(latest) {
-  const view = handoffExternal.viewFromLatest(latest, handoff.goalOf);
+  const repoRoot = handoff.workspaceOf(latest.file) || '';
+  const view = handoffExternal.viewFromLatest(latest, handoff.goalOf, { repoRoot });
+  if (repoRoot) view.repoRoot = repoRoot;
   const note = handoffExternal.notificationFromLatest(latest, handoff.goalOf);
   const tool = handoffExternal.toolForExternalHandoff(latest.file);
   const nc = config.data.notify || {};
@@ -1119,17 +1182,21 @@ function announceExternalHandoff(latest) {
     file: latest.file,
     external: true,
     host: tool,
+    engageId: view.engageId || '',
+    canMarkReturned: !!view.canMarkReturned,
+    returned: !!view.returned,
+    repoRoot: view.repoRoot || repoRoot || '',
     done: true,
     cancelled: false,
     steps: [{ s: 'ok' }, { s: 'ok' }, { s: 'ok' }, { s: 'ok' }],
-    project: handoff.workspaceOf(latest.file) || '',
+    project: repoRoot || '',
   };
   setPetVisible(true);
   lastSaid = JSON.stringify(view);
   sendPet('handoff', view);
   if (tray) tray.setToolTip(`AI 桌宠 · 新交接：${note.body}`);
   updateTrayMenu();
-  log('external handoff', latest.file, 'host', tool);
+  log('external handoff', latest.file, 'host', tool, view.canMarkReturned ? 'can-return' : '');
 }
 
 function pollExternalHandoff() {

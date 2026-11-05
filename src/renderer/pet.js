@@ -459,6 +459,8 @@
     clearTimeout(bubbleTimer); clearTimeout(gifTimer); gifTimer = null;
     gif.style.display = 'none'; gif.removeAttribute('src');
     bubble.classList.remove('notice', 'compact'); bubble.classList.add('handoff', 'open');
+    // 默认靠右键菜单操作；仅外包可「已交回」时露出气泡按钮，避免挤占云朵气泡。
+    bubble.classList.toggle('handoff-actions-on', !!view.canMarkReturned);
     bubbleMode = 'status'; handoffContent.hidden = false;
     puffText.textContent = '';
     puffText.title = '';
@@ -472,6 +474,7 @@
     handoffContent.title = [view.target, view.detail, view.project ? `工作区：${view.project}` : ''].filter(Boolean).join('\n');
     $('#handoff-copy').disabled = !view.canCopy;
     $('#handoff-copy').textContent = view.manualSource ? '复制给原 AI' : '复制指令';
+    $('#handoff-return').hidden = !view.canMarkReturned;
     $('#handoff-cancel').hidden = !!view.done;
     $('#handoff-close').hidden = !view.done;
     const dots = $('#handoff-steps').children;
@@ -480,11 +483,13 @@
     if (changed) { handoffContent.classList.remove('changed'); void handoffContent.offsetWidth; handoffContent.classList.add('changed'); }
     if (view.done) bubbleTimer = setTimeout(() => { if (handoffView && handoffView.id === view.id) hideBubble(); }, view.autoCloseMs || 18000);
   }
-  for (const action of ['copy', 'cancel', 'close']) $('#handoff-' + action).addEventListener('click', (e) => {
+  for (const action of ['copy', 'cancel', 'close', 'return']) $('#handoff-' + action).addEventListener('click', (e) => {
     e.stopPropagation(); if (!handoffView) return;
     if (action === 'close') hideBubble();
-    window.pet.send('handoff:action', { action, id: handoffView.id });
+    const ipcAction = action === 'return' ? 'mark-returned' : action;
+    window.pet.send('handoff:action', { action: ipcAction, id: handoffView.id });
     if (action === 'copy') { $('#handoff-copy').textContent = '已复制'; }
+    if (action === 'return') { $('#handoff-return').hidden = true; $('#handoff-return').disabled = true; }
   });
   window.pet.on('handoff', renderHandoff);
   (function idleLoop() {
