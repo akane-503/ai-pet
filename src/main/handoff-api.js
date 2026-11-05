@@ -777,9 +777,9 @@ function projectRoot(items, distro, cwd) {
   }
   const active = [...explicit.entries()].filter(([, v]) => v.n >= 2).sort((a, b) => b[1].n - a[1].n || b[1].at - a[1].at)[0];
   if (active) return active[0];
-  // WSL 家目录 cwd 在无 WSL 的宿主上 existsSync 会失败（如 GHA windows-latest）；仍按 broad 走 dominantDir
+  // cwd 不存在时仍可能是「家目录 / 工具内部目录」语义（无 WSL 的 CI、尚未建的 ~/.handoff）
   if (!cwd || !fs.existsSync(cwd)) {
-    if (linuxHome) return winner || dominantDir(items, distro) || commonDir(items, distro);
+    if (linuxHome || (cwd && internal(cwd))) return winner || dominantDir(items, distro) || commonDir(items, distro);
     return winner;
   }
   // ZCode 的 cwd 是它自己的工作区（~/.zcode/workspace/default），不是项目：这时用「被提到最多的目录」
