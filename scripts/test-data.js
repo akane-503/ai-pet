@@ -2450,3 +2450,31 @@ test('external handoff announce gate and view', () => {
   assert.equal(n.title, '收到 AI 交接');
   assert.equal(n.body, 'E-001 slice');
 });
+
+test('external handoff picks host from ai-pet-handoff meta (not hard-coded cursor)', () => {
+  const { metaFromHandoff, toolForExternalHandoff, viewFromLatest } = require('../src/main/handoff-external');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-host-meta-'));
+  const file = path.join(dir, 'HANDOFF-E-HOST.md');
+  fs.writeFileSync(
+    file,
+    [
+      '# HANDOFF — E-HOST',
+      '<!-- ai-pet-handoff:{"host":"codex","engageId":"E-HOST","briefPath":"D:/x/.team/engagements/E-HOST/BRIEF.md","takeover":"$takeover E-HOST"} -->',
+      '',
+      '> project-team-pm engage handoff · host=codex · id=E-HOST',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  try {
+    const meta = metaFromHandoff(file);
+    assert.equal(meta.host, 'codex');
+    assert.equal(meta.engageId, 'E-HOST');
+    assert.equal(toolForExternalHandoff(file), 'codex');
+    const v = viewFromLatest({ file, at: 99 }, () => 'E-HOST');
+    assert.equal(v.host, 'codex');
+    assert.match(v.detail, /codex/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
