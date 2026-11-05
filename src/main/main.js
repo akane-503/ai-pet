@@ -1075,8 +1075,10 @@ function handoffAction({ action, id } = {}) {
   if (!job || job.id !== id) return;
   if (action === 'copy' && job.text) {
     // 外部交接：复制路径 + takeover 提示，方便粘到目标工具
-    if (job.external && job.file) clipboard.writeText(handoff.takeoverPrompt(job.file, { tool: 'cursor', home: os.homedir() }));
-    else clipboard.writeText(job.text);
+    if (job.external && job.file) {
+      const tool = handoffExternal.toolForExternalHandoff(job.file);
+      clipboard.writeText(handoff.takeoverPrompt(job.file, { tool, home: os.homedir() }));
+    } else clipboard.writeText(job.text);
   }
   if (action === 'cancel' && job === handoffJob) { job.cancelled = true; job.draftController?.abort(); finishJob(job); }
   if (action === 'close') { job.closed = true; sendPet('cmd', { name: 'hide' }); }
@@ -1086,6 +1088,7 @@ function handoffAction({ action, id } = {}) {
 function announceExternalHandoff(latest) {
   const view = handoffExternal.viewFromLatest(latest, handoff.goalOf);
   const note = handoffExternal.notificationFromLatest(latest, handoff.goalOf);
+  const tool = handoffExternal.toolForExternalHandoff(latest.file);
   const nc = config.data.notify || {};
   const quiet = notifyEngine.inQuietHours(nc.quietHours);
   if (nc.toast !== false && !quiet && Notification.isSupported()) {
@@ -1103,6 +1106,7 @@ function announceExternalHandoff(latest) {
     read: false,
     kind: 'handoff-external',
     file: latest.file,
+    host: tool,
   };
   state.data.notifications.unshift(n);
   state.data.notifications = state.data.notifications.slice(0, 300);
@@ -1111,9 +1115,10 @@ function announceExternalHandoff(latest) {
   lastHandoffJob = {
     id: view.id,
     target: view.target,
-    text: handoff.takeoverPrompt(latest.file, { tool: 'cursor', home: os.homedir() }),
+    text: handoff.takeoverPrompt(latest.file, { tool, home: os.homedir() }),
     file: latest.file,
     external: true,
+    host: tool,
     done: true,
     cancelled: false,
     steps: [{ s: 'ok' }, { s: 'ok' }, { s: 'ok' }, { s: 'ok' }],
@@ -1124,7 +1129,7 @@ function announceExternalHandoff(latest) {
   sendPet('handoff', view);
   if (tray) tray.setToolTip(`AI 桌宠 · 新交接：${note.body}`);
   updateTrayMenu();
-  log('external handoff', latest.file);
+  log('external handoff', latest.file, 'host', tool);
 }
 
 function pollExternalHandoff() {
