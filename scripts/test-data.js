@@ -2433,3 +2433,20 @@ test('Codex transfer keeps the folder open in the tool instead of a nested repo 
     assert.equal(h.sessionPointer('codex', [dir], '', roll).project, proj, '工具里开的项目是 proj，别被 sub 里的 .git 拽到子目录');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('external handoff announce gate and view', () => {
+  const { shouldAnnounce, viewFromLatest, notificationFromLatest } = require('../src/main/handoff-external');
+  assert.equal(shouldAnnounce(null, { lastAt: 0, busy: false }), false);
+  assert.equal(shouldAnnounce({ file: 'D:\\a.md', at: 10 }, { lastAt: 10, busy: false }), false);
+  assert.equal(shouldAnnounce({ file: 'D:\\a.md', at: 11 }, { lastAt: 10, busy: true }), false);
+  assert.equal(shouldAnnounce({ file: 'D:\\a.md', at: 11 }, { lastAt: 10, busy: false, selfWriteUntil: 100, now: 50 }), false);
+  assert.equal(shouldAnnounce({ file: 'D:\\a.md', at: 11 }, { lastAt: 10, busy: false, selfWriteUntil: 100, now: 200 }), true);
+  const v = viewFromLatest({ file: 'D:\\cache\\HANDOFF-E-001.md', at: 42 }, () => 'E-001 slice');
+  assert.equal(v.heading, '收到交接文件');
+  assert.equal(v.detail, 'E-001 slice');
+  assert.equal(v.external, true);
+  assert.equal(v.canCopy, true);
+  const n = notificationFromLatest({ file: 'D:\\cache\\HANDOFF-E-001.md', at: 42 }, () => 'E-001 slice');
+  assert.equal(n.title, '收到 AI 交接');
+  assert.equal(n.body, 'E-001 slice');
+});

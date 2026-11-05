@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "modules": {
+    "m-main": ["src/main/*.js", "src/main/*.ps1"],
+    "m-providers": ["src/main/providers/**"],
+    "m-renderer": ["src/renderer/**"],
+    "m-shared": ["src/shared/**"],
+    "m-scripts": ["scripts/**"],
+    "m-skills": ["skills/**"],
+    "m-launcher": ["start.cmd"],
+    "m-docs": ["README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "docs/**"]
+  },
+  "protected": [
+    "package.json",
+    "package-lock.json",
+    ".npmrc",
+    "build/**",
+    "assets/**",
+    ".github/**",
+    "**/*.lock",
+    ".team/**",
+    "AGENTS.md"
+  ],
+  "serial": [".team/**", "node_modules/**"],
+  "note": "任务可写多个模块：--module m-main,m-scripts。main.js 是热点文件，尽量串行；assets/build/lockfile 归集成者。"
+}

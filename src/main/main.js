@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, Notification, shell, nativeImage, powerMonitor, dialog, clipboard, globalShortcut, utilityProcess } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { JsonStore, defaultConfig, defaultState, deepMerge, AGENT_PRESETS } = require('./config');
 const providers = require('./providers');
 const notifyEngine = require('./notify');
@@ -16,6 +17,7 @@ const handoff = require('./handoff');
 const handoffReturn = require('./handoff-return');
 const handoffEstimate = require('./handoff-estimate');
 const handoffApi = require('./handoff-api');
+const handoffExternal = require('./handoff-external');
 const cursorModel = require('./cursor-model');
 const agentModel = require('./agent-model');
 const http = require('./http');
@@ -110,6 +112,9 @@ let lastAgentWin = null; // 最近在前台的 AI 窗口，一键交接从它交
 let handoffJob = null;    // 进行中的一键交接
 let lastHandoffJob = null;
 let handoffSerial = 0;
+let externalHandoffAt = 0;       // 已播报的 latest.txt mtime
+let externalHandoffSuppressUntil = 0; // 本进程自己写交接后的短抑制窗
+let externalHandoffTimer = null;
 let foreground = { character: null, at: 0 };           // 当前前台窗口对应的 agent
 let knownAgentWins = null;                              // 上次看到的 agent 窗口 hwnd -> 角色
 function charOf(key) {
@@ -1045,6 +1050,7 @@ function finishJob(job) {
   job.done = true; for (const x of job.steps) if (x.s === 'run' || x.s === 'wait') x.s = job.cancelled ? 'cancelled' : x.s;
   if (handoffJob !== job) return;
   pushHandoff(); lastHandoffJob = job; handoffJob = null; lastSaid = ''; updateTrayMenu(); escToCancel(false);
+  markExternalHandoffBaseline();
 }
 // Esc 仲裁（只在交接期间占用全局 Esc）：桌宠自己在前台 → 一下就取消；别的应用在前台 → 第一下原样还给它，
 // 1 秒内再按一下才算取消交接。还键时先注销热键再补按，稍后重新注册，否则补按的那一下会被自己再截住
@@ -1067,9 +1073,76 @@ function escToCancel(on) {
 function handoffAction({ action, id } = {}) {
   const job = handoffJob || lastHandoffJob;
   if (!job || job.id !== id) return;
-  if (action === 'copy' && job.text) clipboard.writeText(job.text);
+  if (action === 'copy' && job.text) {
+    // 外部交接：复制路径 + takeover 提示，方便粘到目标工具
+    if (job.external && job.file) clipboard.writeText(handoff.takeoverPrompt(job.file, { tool: 'cursor', home: os.homedir() }));
+    else clipboard.writeText(job.text);
+  }
   if (action === 'cancel' && job === handoffJob) { job.cancelled = true; job.draftController?.abort(); finishJob(job); }
   if (action === 'close') { job.closed = true; sendPet('cmd', { name: 'hide' }); }
+}
+
+/** 外部写入 ~/.handoff/latest.txt（如 project-team engage --live）时弹出桌宠交接 UI + 系统通知 + 托盘提示 */
+function announceExternalHandoff(latest) {
+  const view = handoffExternal.viewFromLatest(latest, handoff.goalOf);
+  const note = handoffExternal.notificationFromLatest(latest, handoff.goalOf);
+  const nc = config.data.notify || {};
+  const quiet = notifyEngine.inQuietHours(nc.quietHours);
+  if (nc.toast !== false && !quiet && Notification.isSupported()) {
+    try {
+      const t = new Notification({ title: note.title, body: note.body, icon: path.join(ASSETS, 'app.ico'), silent: !nc.sound });
+      t.on('click', () => { setPetVisible(true); sendPet('handoff', view); });
+      t.show();
+    } catch (e) { log('external handoff toast', e.message); }
+  }
+  const n = {
+    id: `ext-h-${latest.at}`,
+    ts: Date.now(),
+    title: note.title,
+    body: note.body,
+    read: false,
+    kind: 'handoff-external',
+    file: latest.file,
+  };
+  state.data.notifications.unshift(n);
+  state.data.notifications = state.data.notifications.slice(0, 300);
+  state.saveSoon();
+  sendSettings('notification', n);
+  lastHandoffJob = {
+    id: view.id,
+    target: view.target,
+    text: handoff.takeoverPrompt(latest.file, { tool: 'cursor', home: os.homedir() }),
+    file: latest.file,
+    external: true,
+    done: true,
+    cancelled: false,
+    steps: [{ s: 'ok' }, { s: 'ok' }, { s: 'ok' }, { s: 'ok' }],
+    project: handoff.workspaceOf(latest.file) || '',
+  };
+  setPetVisible(true);
+  lastSaid = JSON.stringify(view);
+  sendPet('handoff', view);
+  if (tray) tray.setToolTip(`AI 桌宠 · 新交接：${note.body}`);
+  updateTrayMenu();
+  log('external handoff', latest.file);
+}
+
+function pollExternalHandoff() {
+  if (QUOTA_ONLY) return;
+  const latest = handoff.latest();
+  if (!handoffExternal.shouldAnnounce(latest, {
+    lastAt: externalHandoffAt,
+    busy: !!handoffJob,
+    selfWriteUntil: externalHandoffSuppressUntil,
+  })) return;
+  externalHandoffAt = latest.at;
+  announceExternalHandoff(latest);
+}
+
+function markExternalHandoffBaseline() {
+  const latest = handoff.latest();
+  externalHandoffAt = latest?.at || Date.now();
+  externalHandoffSuppressUntil = Date.now() + 4000;
 }
 function transcriptDirs(kind) {
   if (kind === 'codex') return [codexHome()];
@@ -1569,6 +1642,8 @@ app.whenReady().then(() => {
   createPetWindow();
   if (firstRun) openSettings('tools');
   checkActivity();
+  markExternalHandoffBaseline();
+  if (!externalHandoffTimer) externalHandoffTimer = setInterval(pollExternalHandoff, 2000);
   // 首次：只把本机装了的预设 agent 加进来
   launcher.discover([...agents(), ...AGENT_PRESETS]).then(() => {
     if (config.data.agents) return;

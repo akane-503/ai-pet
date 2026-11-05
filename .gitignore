@@ -22,3 +22,9 @@ notice-*.png
 ui-shots/
 /HANDOFF*.md
 .claude/
+
+# project-team 本地状态（租约/会话/证据）
+.team/local/
+
+# 本地归档（旧交接文档、构建暂存）
+archive/

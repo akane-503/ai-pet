@@ -1,0 +1,24 @@
+---
+description: project-team-pm 多会话协作硬规则（Manager / 执行 / 写集）
+alwaysApply: true
+---
+
+# project-team（Cursor）
+
+本仓用 `.team/` + `node .team/tools/team.mjs` 做多会话协作。控制面源：见 `.team/CONTROL_PLANE.md`（独立仓 `project-team-pm`）。
+
+## 硬规则
+
+1. Manager 不写业务代码；执行者只改任务书写集（`write`）内文件。
+2. 不改 `.team/` 控制面（除 CLI 自动写入）；不改别人的任务；不删公告栏行。
+3. 状态只认 CLI 与 `.team/BULLETIN.md`，不认对话记忆。
+4. 先 `claim` 再改代码；写集冲突未裁决前不写重叠路径。
+5. 任务工作树内禁止 `npm install` / 升级依赖（`linkDirs` 共享）。
+6. 破坏性操作（杀进程、装机、注册表）必须先过 `.team/DECISIONS.md`。
+7. 在任务 worktree 里调用 team CLI 时，使用**控制面仓根**的绝对路径，不用工作树里可能过期的 `.team/tools` 副本。
+
+## 开场
+
+- Manager：读 `.team/MANAGER.md`，跑 `status` / `doctor`。
+- Executor：粘贴 `.team/local/sessions/T-00x.md` 全文；cwd = 任务 worktree。
+- 分会话说明：`.team/CURSOR_SESSIONS.md` 或适配仓 `adapters/cursor/SESSIONS.md`。
