@@ -493,7 +493,7 @@ function cell(v) {
 }
 
 function ownerLabel(t) {
-  if (t.sessionId) return `\`${String(t.sessionId).slice(-8)}\``;
+  if (t.sessionName || t.sessionId) return `\`${sessionLabel(t)}\``;
   if (t.claim && t.claim.owner) return `\`${t.claim.owner}\``;
   return '—';
 }
@@ -868,7 +868,7 @@ function cmdTaskList(opts) {
   requireInitialized(ctx);
   const st = readState(ctx);
   const rows = Object.values(st.tasks).sort((a, b) => a.id.localeCompare(b.id))
-    .map((t) => [t.id, t.title, t.module || '—', t.status, t.sessionId ? t.sessionId.slice(-8) : '—', String(t.write.length)]);
+    .map((t) => [t.id, t.title, t.module || '—', t.status, sessionLabel(t), String(t.write.length)]);
   if (opts.json) return jsonOut(Object.values(st.tasks));
   table(['任务', '标题', '模块', '状态', '会话', '写集'], rows);
 }
@@ -1015,19 +1015,28 @@ function cmdDispatch(opts) {
   console.log(`\n派完子会话后：node .team/tools/team.mjs link ${id} --session <会话id>`);
 }
 
+function sessionLabel(t) {
+  if (!t) return '—';
+  if (t.sessionName) return String(t.sessionName);
+  if (t.sessionId) return String(t.sessionId).slice(-8);
+  return '—';
+}
+
 function cmdLink(opts) {
   const ctx = resolveContext();
   requireInitialized(ctx);
   const id = must(opts.id || opts._[0], 'id');
   const session = must(opts.session, 'session');
+  const name = opts.name || opts.label || opts.as || '';
   mutate(ctx, (st) => {
     const t = st.tasks[id];
     if (!t) throw new TeamError('NO_TASK', `任务不存在：${id}`);
     t.sessionId = session;
+    if (name) t.sessionName = String(name);
     t.updatedAt = nowIso();
-    appendEvent(ctx, { event: 'task.link', id, session });
+    appendEvent(ctx, { event: 'task.link', id, session, name: name || undefined });
   });
-  console.log(`已记录 ${id} → ${session}`);
+  console.log(`已记录 ${id} → ${name ? `${name} (${session})` : session}`);
 }
 
 function taskLease(st, id) {
@@ -1612,7 +1621,7 @@ function cmdStatus(opts) {
       || leases.find((l) => String(l.owner || '').startsWith('engage:'))
       || leases[0]
       || null;
-    return [t.id, t.title, t.module || '—', t.status, t.sessionId ? t.sessionId.slice(-8) : '—',
+    return [t.id, t.title, t.module || '—', t.status, sessionLabel(t),
       lease ? `${lease.owner} ${shortTime(new Date(lease.expiresAt).toISOString())}` : '—', nextCell(t)];
   }));
   const overlaps = [];
@@ -1979,7 +1988,7 @@ function printHelp() {
 
 派单 / 执行
   dispatch --id T-001 [--override-overlap --reason "..."] [--reuse]
-  link --id T-001 --session <会话id>
+  link --id T-001 --session <会话id> [--name "Exec·T-001·短标题"]
   claim --id T-001 (--token <token> | --manager) [--takeover] [--ttl-ms N]
   renew --id T-001 --token <token>
   release --id T-001 --token <token>

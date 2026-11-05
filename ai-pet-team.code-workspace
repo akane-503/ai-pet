@@ -1,23 +1,23 @@
 {
   "folders": [
     {
-      "name": "Manager · ai-pet",
+      "name": "【Manager】管板",
       "path": "D:/01_Projects/Active/ai-pet"
     },
     {
-      "name": "Executor · T-020",
+      "name": "【Exec·T-020】会话地图",
       "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-020"
     },
     {
-      "name": "Executor · T-021",
+      "name": "【Exec·T-021】控制面指针",
       "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-021"
     },
     {
-      "name": "Integration",
+      "name": "【Integration】集成",
       "path": "D:/01_Projects/Active/ai-pet.team-worktrees/integration"
     }
   ],
   "settings": {
-    "window.title": "ai-pet team sessions"
+    "window.title": "【Team】ai-pet 分会话"
   }
 }

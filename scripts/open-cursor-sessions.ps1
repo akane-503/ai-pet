@@ -1,39 +1,30 @@
 <#
 .SYNOPSIS
-  One-click open ai-pet Manager + Executor (T-020/T-021) (+ optional Integration) sessions.
+  Open named Cursor sessions for ai-pet (window titles you can read).
 
-.DESCRIPTION
-  - Ensures worktrees / START_HERE / prompts exist
-  - Creates Cursor Agent CLI chats (agent create-chat) and seeds first message (-p)
-  - Opens Cursor GUI windows focused on START_HERE.md
-  - Prefills clipboard with Manager prompt
+.PARAMETER Gui
+  Open named .code-workspace windows (default: on).
 
-  Cannot inject text into the Cursor GUI chat composer; GUI still needs one Send
-  (or @START_HERE.md). CLI chats are fully seeded and resumable.
+.PARAMETER Named
+  Refresh named workspaces / SESSION_MAP (always done).
 
-.PARAMETER MultiRoot
-  Open a single multi-root .code-workspace instead of separate windows.
-
-.PARAMETER NoGui
-  Skip opening Cursor GUI.
-
-.PARAMETER NoSeed
-  Create chat IDs only; do not send seed prompts via agent -p.
+.PARAMETER Seed
+  Also create Agent CLI chats and seed first message.
 
 .PARAMETER RunExecutors
-  After seed, run T-020/T-021 in print mode with --force (actually claim/write/submit).
+  With -Seed, actually claim/write/submit T-020/T-021 via agent --force.
 
 .PARAMETER Integration
-  Also open/seed the integration worktree session.
+  Include Integration window.
 
-.PARAMETER WorkspaceOnly
-  Only refresh materials + workspace file; do not open or seed.
+.PARAMETER NoGui
+  Skip opening windows.
 #>
 [CmdletBinding()]
 param(
-  [switch]$MultiRoot,
+  [switch]$Gui = $true,
   [switch]$NoGui,
-  [switch]$NoSeed,
+  [switch]$Seed,
   [switch]$RunExecutors,
   [switch]$Integration,
   [switch]$WorkspaceOnly
@@ -42,62 +33,26 @@ param(
 $ErrorActionPreference = 'Stop'
 $Pet = 'D:\01_Projects\Active\ai-pet'
 $ControlTeam = Join-Path $Pet '.team\tools\team.mjs'
+$SessDir = Join-Path $Pet '.team\cursor-sessions'
 $SessionsOut = Join-Path $Pet '.team\local\cursor-open\sessions.json'
-$Gen = Join-Path $Pet 'scripts\_gen-cursor-open-materials.mjs'
+$GenNamed = Join-Path $Pet 'scripts\_gen-named-sessions.mjs'
+$GenMats = Join-Path $Pet 'scripts\_gen-cursor-open-materials.mjs'
 
-function Ensure-Materials {
-  if (-not (Test-Path $Gen)) { throw "Missing generator: $Gen" }
-  node $Gen | Out-Host
-  foreach ($id in @('T-020','T-021')) {
-    $wt = "D:\01_Projects\Active\ai-pet.team-worktrees\$id"
-    if (-not (Test-Path $wt)) {
-      Write-Host "[open] dispatch $id"
-      Push-Location $Pet
-      node $ControlTeam dispatch --id $id | Out-Host
-      Pop-Location
-      node $Gen | Out-Host
-    }
-  }
+if ($NoGui) { $Gui = $false }
+
+function Get-Roles {
+  $path = Join-Path $SessDir 'roles.json'
+  if (-not (Test-Path $path)) { throw "missing $path — run generator" }
+  return Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
 }
 
-function New-ChatId {
-  $raw = & agent create-chat 2>&1 | Out-String
-  $id = ($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9a-f-]{20,}$' } | Select-Object -First 1)
-  if (-not $id) { throw "agent create-chat failed: $raw" }
-  return $id
-}
+Write-Host '[1] refresh named workspaces + START_HERE + SESSION_MAP'
+if (Test-Path $GenMats) { node $GenMats | Out-Null }
+node $GenNamed | Out-Host
+if ($WorkspaceOnly) { exit 0 }
 
-function Seed-Chat([string]$ChatId, [string]$Workspace, [string]$Prompt, [string]$Mode = 'ask') {
-  Write-Host "[seed] $ChatId @ $Workspace ($Mode)"
-  $argv = @('--workspace', $Workspace, '--trust')
-  if ($Mode -eq 'ask' -or $Mode -eq 'plan') { $argv += @('--mode', $Mode) }
-  $argv += @('-p', '--resume', $ChatId, $Prompt)
-  & agent @argv 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host "  $_" }
-}
-
-function Open-Gui([string]$Folder, [string]$StartHere) {
-  $start = Join-Path $Folder 'START_HERE.md'
-  if (-not (Test-Path $start)) { $start = $StartHere }
-  Write-Host "[gui] $Folder"
-  # Separate classic window + jump to START_HERE (Agent panel: user @ file / paste)
-  Start-Process -FilePath 'cursor' -ArgumentList @('-n', '-g', "${start}:1") | Out-Null
-  Start-Sleep -Milliseconds 800
-}
-
-Ensure-Materials
-if ($WorkspaceOnly) {
-  Write-Host '[open] materials refreshed only'
-  exit 0
-}
-
-$roles = @(
-  @{ Name = 'manager'; Folder = $Pet; PromptFile = Join-Path $Pet '.team\local\cursor-open\manager.prompt.txt'; Mode = 'agent' },
-  @{ Name = 'T-020'; Folder = 'D:\01_Projects\Active\ai-pet.team-worktrees\T-020'; PromptFile = Join-Path $Pet '.team\local\cursor-open\T-020.prompt.txt'; Mode = 'ask' },
-  @{ Name = 'T-021'; Folder = 'D:\01_Projects\Active\ai-pet.team-worktrees\T-021'; PromptFile = Join-Path $Pet '.team\local\cursor-open\T-021.prompt.txt'; Mode = 'ask' }
-)
-if ($Integration) {
-  $roles += @{ Name = 'integration'; Folder = 'D:\01_Projects\Active\ai-pet.team-worktrees\integration'; PromptFile = Join-Path $Pet '.team\local\cursor-open\integration.prompt.txt'; Mode = 'agent' }
-}
+$roles = @(Get-Roles)
+if (-not $Integration) { $roles = @($roles | Where-Object { $_.key -ne 'integration' }) }
 
 $record = [ordered]@{
   at = (Get-Date).ToString('o')
@@ -105,56 +60,63 @@ $record = [ordered]@{
   chats = @()
 }
 
-foreach ($r in $roles) {
-  $prompt = Get-Content -LiteralPath $r.PromptFile -Raw -Encoding utf8
-  $chatId = New-ChatId
-  Write-Host "[chat] $($r.Name) = $chatId"
-  if (-not $NoSeed) {
-    Seed-Chat -ChatId $chatId -Workspace $r.Folder -Prompt $prompt.Trim() -Mode $r.Mode
+if ($Seed) {
+  Write-Host '[2] create + seed named Agent CLI chats'
+  foreach ($r in $roles) {
+    $raw = & agent create-chat 2>&1 | Out-String
+    $chatId = ($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9a-f-]{20,}$' } | Select-Object -First 1)
+    if (-not $chatId) { throw "create-chat failed for $($r.key): $raw" }
+    $prompt = "你是「$($r.windowTitle)」。职责：$($r.job)。任务：$($r.task)。先读本工作区 START_HERE.md 与 SESSION_MAP.md，用中文确认你的角色名与下一步。不要改无关文件。"
+    $force = $false
+    if ($RunExecutors -and $r.key -match '^T-') {
+      $force = $true
+      $prompt = "你是「$($r.windowTitle)」。立即按 START_HERE.md 与 sessions 简报完成 $($r.key)：claim→只改写集→commit→submit。控制面 node $Pet\.team\tools\team.mjs。不要 push。"
+    }
+    Write-Host "  [$($r.windowTitle)] chat=$chatId"
+    $argv = @('--workspace', $r.folder, '--trust', '-p', '--resume', $chatId)
+    if ($force) { $argv = @('--workspace', $r.folder, '--trust', '--force', '-p', '--resume', $chatId) }
+    $argv += $prompt
+    & agent @argv 2>&1 | Select-Object -First 15 | ForEach-Object { Write-Host "    $_" }
+
+    if ($r.key -match '^T-') {
+      Push-Location $Pet
+      node $ControlTeam link --id $r.key --session $chatId --name $r.windowTitle 2>&1 | Out-Host
+      Pop-Location
+    }
+
+    $record.chats += [ordered]@{
+      role = $r.key
+      name = $r.windowTitle
+      job = $r.job
+      task = $r.task
+      chatId = $chatId
+      workspaceFile = Join-Path $SessDir $r.file
+      folder = $r.folder
+      resume = "agent --workspace `"$($r.folder)`" --resume $chatId"
+    }
   }
-  if ($RunExecutors -and $r.Name -match '^T-') {
-    Write-Host "[run] executor $($r.Name) with --force"
-    $runPrompt = @"
-按 START_HERE.md 与 .team 简报完成 $($r.Name)：在本 worktree claim（用简报 token），只改写集文件并 git commit，然后 submit。
-控制面：node $Pet/.team/tools/team.mjs
-不要改 src/**，不要 push。
-"@
-    & agent --workspace $r.Folder --trust --force -p --resume $chatId $runPrompt 2>&1 | Select-Object -First 40 | ForEach-Object { Write-Host "  $_" }
-  }
-  $record.chats += [ordered]@{
-    role = $r.Name
-    chatId = $chatId
-    workspace = $r.Folder
-    resume = "agent --workspace `"$($r.Folder)`" --resume $chatId"
-  }
+  New-Item -ItemType Directory -Force -Path (Split-Path $SessionsOut) | Out-Null
+  [IO.File]::WriteAllText($SessionsOut, ($record | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+} else {
+  Write-Host '[2] skip CLI seed (pass -Seed to create chats). Still opening named GUI windows.'
 }
 
-$json = $record | ConvertTo-Json -Depth 6
-[System.IO.File]::WriteAllText($SessionsOut, $json, [System.Text.UTF8Encoding]::new($false))
-Write-Host "[open] wrote $SessionsOut"
-
-# Clipboard = Manager prompt
-try {
-  $mgr = Get-Content -LiteralPath (Join-Path $Pet '.team\local\cursor-open\manager.prompt.txt') -Raw -Encoding utf8
-  Set-Clipboard -Value $mgr.Trim()
-  Write-Host '[open] clipboard = Manager prompt'
-} catch {
-  Write-Host "[open] clipboard skipped: $($_.Exception.Message)"
-}
-
-if (-not $NoGui) {
-  if ($MultiRoot) {
-    $ws = Join-Path $Pet 'ai-pet-team.code-workspace'
-    Write-Host "[gui] multi-root $ws"
+if ($Gui) {
+  Write-Host '[3] open named Cursor windows (title bar = 角色名)'
+  foreach ($r in $roles) {
+    $ws = Join-Path $SessDir $r.file
+    Write-Host "  open $($r.windowTitle) <- $ws"
     Start-Process -FilePath 'cursor' -ArgumentList @('-n', $ws) | Out-Null
-  } else {
-    foreach ($r in $roles) { Open-Gui -Folder $r.Folder -StartHere (Join-Path $r.Folder 'START_HERE.md') }
+    Start-Sleep -Milliseconds 900
   }
 }
+
+Push-Location $Pet
+node $ControlTeam note --text "命名会话：见 SESSION_MAP.md / .team/cursor-sessions/。窗口标题【Manager】【Exec·T-020】【Exec·T-021】【Integration】。" 2>&1 | Out-Host
+node $ControlTeam status 2>&1 | Out-Host
+Pop-Location
 
 Write-Host ''
-Write-Host '=== done ==='
-Write-Host "Chats: $SessionsOut"
-Write-Host 'GUI: each window opens START_HERE.md — in Agent 输入框 Ctrl+V（Manager 已在剪贴板）或 @START_HERE.md 后发送一次。'
-Write-Host 'CLI resume 示例:'
-foreach ($c in $record.chats) { Write-Host "  $($c.resume)" }
+Write-Host '=== 命名会话已打开 ==='
+Write-Host '看标题栏 / 侧栏根名即可分辨。一览：SESSION_MAP.md'
+Get-Content (Join-Path $Pet 'SESSION_MAP.md') -Encoding utf8 | Select-Object -First 20
