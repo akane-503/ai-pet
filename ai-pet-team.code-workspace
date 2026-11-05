@@ -1,0 +1,23 @@
+{
+  "folders": [
+    {
+      "name": "Manager · ai-pet",
+      "path": "D:/01_Projects/Active/ai-pet"
+    },
+    {
+      "name": "Executor · T-020",
+      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-020"
+    },
+    {
+      "name": "Executor · T-021",
+      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/T-021"
+    },
+    {
+      "name": "Integration",
+      "path": "D:/01_Projects/Active/ai-pet.team-worktrees/integration"
+    }
+  ],
+  "settings": {
+    "window.title": "ai-pet team sessions"
+  }
+}
