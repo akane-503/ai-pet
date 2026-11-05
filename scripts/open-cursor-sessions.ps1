@@ -69,8 +69,10 @@ function New-ChatId {
 
 function Seed-Chat([string]$ChatId, [string]$Workspace, [string]$Prompt, [string]$Mode = 'ask') {
   Write-Host "[seed] $ChatId @ $Workspace ($Mode)"
-  $args = @('--workspace', $Workspace, '--trust', '--mode', $Mode, '-p', '--resume', $ChatId, $Prompt)
-  & agent @args 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host "  $_" }
+  $argv = @('--workspace', $Workspace, '--trust')
+  if ($Mode -eq 'ask' -or $Mode -eq 'plan') { $argv += @('--mode', $Mode) }
+  $argv += @('-p', '--resume', $ChatId, $Prompt)
+  & agent @argv 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host "  $_" }
 }
 
 function Open-Gui([string]$Folder, [string]$StartHere) {
