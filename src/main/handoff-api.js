@@ -723,7 +723,7 @@ function dominantDir(items, distro) {
   }
   const need = Math.max(3, Math.ceil(paths.length * 0.7));
   return [...counts.entries()]
-    .filter(([k, n]) => n >= need && !tooBroad(k) && !internalPath(k) && fs.existsSync(k))
+    .filter(([k, n]) => n >= need && !tooBroad(k) && !internalPath(original.get(k) || k) && fs.existsSync(original.get(k) || k))
     .sort((a, b) => depth.get(b[0]) - depth.get(a[0]) || counts.get(b[0]) - counts.get(a[0]))
     .map((e) => original.get(e[0]))[0] || null;
 }

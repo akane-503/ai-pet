@@ -1529,13 +1529,18 @@ test('non-git projects in a home-directory session resolve to the dominant folde
   const h = require('../src/main/handoff-api');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dom-'));
   try {
-    // 复刻 2026/10/23 20:04 的翻车现场：WSL 家目录里的 Claude 改 E 盘文档，项目不是 git 仓库，
+    // 复刻 2026/10/23 20:04 的翻车现场：WSL 家目录里的 Claude 改文档，项目不是 git 仓库，
     // 提到的路径多在 tmp/output 子目录里——以前 projectRoot 返回 null，交接文件掉进全局 .handoff
-    // 目录名用 ASCII：GitHub windows-latest runner 对中文路径编码不稳定（main CI 已长期红）
-    const proj = path.join(dir, 'E', 'School', 'micro-major');
+    // 夹具用 /mnt/<drive>/...（pathsIn 会转成盘符路径）；避免 JSON 里 Windows 反斜杠在 GHA 上抽径失败
+    const proj = path.join(dir, 'School', 'micro-major');
     const tmp = path.join(proj, 'tmp'), out = path.join(proj, 'output');
     fs.mkdirSync(tmp, { recursive: true }); fs.mkdirSync(out, { recursive: true });
-    const tool = (p) => ({ role: 'tool', full: JSON.stringify({ cmd: `cat ${p}` }) });
+    const toMnt = (winPath) => {
+      const m = /^([A-Za-z]):[\\/](.*)$/.exec(path.resolve(winPath));
+      assert.ok(m, `expected absolute windows path: ${winPath}`);
+      return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`;
+    };
+    const tool = (p) => ({ role: 'tool', full: JSON.stringify({ cmd: `cat ${toMnt(p)}` }) });
     const items = [];
     for (let i = 0; i < 4; i++) items.push(tool(path.join(tmp, `t${i}.html`)));
     for (let i = 0; i < 2; i++) items.push(tool(path.join(out, `o${i}.pdf`)));
