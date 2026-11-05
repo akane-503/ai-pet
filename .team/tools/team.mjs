@@ -144,6 +144,21 @@ function must(v, name) {
   return String(v);
 }
 
+/** Copy managerd into .team/tools/ (skill sibling, or PM services/). */
+function copyManagerdTool(toolsDir) {
+  const candidates = [
+    path.join(__dirname, 'managerd.mjs'),
+    path.join(__dirname, '..', '..', 'services', 'manager-daemon.mjs'),
+  ];
+  for (const src of candidates) {
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(toolsDir, 'managerd.mjs'));
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------- 进程执行
 
 function tmpFile(tag) {
@@ -596,6 +611,7 @@ function cmdInit(opts) {
       const engSrc = path.join(__dirname, 'engagement.mjs');
       if (fs.existsSync(engSrc)) fs.copyFileSync(engSrc, path.join(ctx.teamDir, 'tools', 'engagement.mjs'));
     }
+    copyManagerdTool(path.join(ctx.teamDir, 'tools'));
     if (fs.existsSync(TEMPLATE_ROOT)) {
       for (const f of fs.readdirSync(TEMPLATE_ROOT)) {
         const src = path.join(TEMPLATE_ROOT, f);
@@ -690,6 +706,7 @@ function cmdInit(opts) {
     const engSrc = path.join(__dirname, 'engagement.mjs');
     if (fs.existsSync(engSrc)) fs.copyFileSync(engSrc, path.join(ctx.teamDir, 'tools', 'engagement.mjs'));
   }
+  copyManagerdTool(path.join(ctx.teamDir, 'tools'));
   ensureDir(path.join(ctx.teamDir, 'tools', 'templates'));
   if (fs.existsSync(TEMPLATE_ROOT)) {
     for (const f of fs.readdirSync(TEMPLATE_ROOT)) {
@@ -1058,8 +1075,12 @@ function cmdClaim(opts) {
     const t = st.tasks[id];
     const existing = taskLease(st, id);
     if (existing && existing.owner !== owner && !opts.takeover && !opts.manager) {
-      throw new TeamError('LEASED', `任务 ${id} 已有租约：${existing.owner}，到期 ${shortTime(new Date(existing.expiresAt).toISOString())}`, 3,
-        '等对方 release/过期，或由 manager --takeover');
+      // 外包出站后的 engage:<host> 租约：接包方用 token claim 可直接接手，无需 --takeover
+      const engageHandoff = String(existing.owner || '').startsWith('engage:');
+      if (!engageHandoff) {
+        throw new TeamError('LEASED', `任务 ${id} 已有租约：${existing.owner}，到期 ${shortTime(new Date(existing.expiresAt).toISOString())}`, 3,
+          '等对方 release/过期，或由 manager --takeover');
+      }
     }
     // 跨任务写集冲突（被 ARB 授权并行的任务除外）
     if (!t.allowOverlap) {
@@ -1071,7 +1092,10 @@ function cmdClaim(opts) {
         }
       }
     }
-    if (existing) delete st.leases[existing.id];
+    // 清掉本任务全部旧租约（含多条残留），避免双租约
+    for (const [lid, lease] of Object.entries(st.leases)) {
+      if (lease.taskId === id) delete st.leases[lid];
+    }
     const leaseId = `L-${Date.now().toString(36)}-${crypto.randomBytes(2).toString('hex')}`;
     st.leases[leaseId] = {
       id: leaseId, taskId: id, owner, paths: t.write, createdAt: nowIso(), expiresAt: Date.now() + ttl,
@@ -1406,8 +1430,10 @@ function cmdIntegrate(opts) {
     delete t.claim;
     appendEvent(ctx, { event: 'integrate.ok', id, mergeSha });
   });
-  console.log(`已集成 ${id} → ${cfg.integrationBranch} @ ${mergeSha.slice(0, 7)}${gate.skipped ? '（未跑门禁）' : ''}`);
-  console.log(`下一步：team.mjs accept ${id}${t0.needsHuman ? ' --human-ok' : ''}`);
+  if (!opts.quiet) {
+    console.log(`已集成 ${id} → ${cfg.integrationBranch} @ ${mergeSha.slice(0, 7)}${gate.skipped ? '（未跑门禁）' : ''}`);
+    console.log(`下一步：team.mjs accept ${id}${t0.needsHuman ? ' --human-ok' : ''}`);
+  }
 }
 
 function cmdAccept(opts) {
@@ -1430,7 +1456,7 @@ function cmdAccept(opts) {
     for (const [lid, l] of Object.entries(st.leases)) if (l.taskId === id) delete st.leases[lid];
     appendEvent(ctx, { event: 'task.accept', id, by: opts.by || 'manager' });
   });
-  console.log(`已验收 ${id}`);
+  if (!opts.quiet) console.log(`已验收 ${id}`);
 }
 
 function cmdReject(opts) {
@@ -1581,7 +1607,11 @@ function cmdStatus(opts) {
   console.log('状态：' + STATUSES.filter((s) => counts[s]).map((s) => `${s} ${counts[s]}`).join(' · '));
   console.log('');
   table(['任务', '标题', '模块', '状态', '会话', '租约', '下一步'], tasks.map((t) => {
-    const lease = Object.values(st.leases).find((l) => l.taskId === t.id);
+    const leases = Object.values(st.leases).filter((l) => l.taskId === t.id);
+    const lease = (t.claim?.leaseId && st.leases[t.claim.leaseId])
+      || leases.find((l) => String(l.owner || '').startsWith('engage:'))
+      || leases[0]
+      || null;
     return [t.id, t.title, t.module || '—', t.status, t.sessionId ? t.sessionId.slice(-8) : '—',
       lease ? `${lease.owner} ${shortTime(new Date(lease.expiresAt).toISOString())}` : '—', nextCell(t)];
   }));
@@ -1970,7 +2000,8 @@ function printHelp() {
   engage out --id E-001 [--dry-run]
   engage start --id E-001 --by <host>
   engage deliver --id E-001 --head <sha> [--files "a;b"] [--note "..."] [--dry-run]
-  engage accept --id E-001 [--dry-run] [--skip-gate] [--finalize] [--cr] [--integrate]
+  engage accept --id E-001 [--dry-run] [--skip-gate] [--integrate] [--finalize] [--cr]
+  engage help
   engage reject --id E-001 --reason "..."
   engage cancel|list|show|brief --id E-001
 
@@ -2029,6 +2060,7 @@ function main() {
         loadConfig, readState, ensureDir, atomicWrite, runShellToLog,
         resolveContext, requireInitialized, matchAny, git,
         integrate: cmdIntegrate,
+        acceptTask: cmdAccept,
       });
       return eng.dispatch(sub, subOpts);
     }

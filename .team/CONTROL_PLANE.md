@@ -8,13 +8,18 @@
 | 技能包 | `D:/01_Projects/Active/project-team-pm/skill` |
 | CLI（源） | `D:/01_Projects/Active/project-team-pm/bin/team.mjs` |
 | 本仓运行时 CLI | `node .team/tools/team.mjs`（由技能 `scripts/team.mjs` 复制；升级用下方 refresh） |
-| Manager 守护 | `D:/01_Projects/Active/project-team-pm/services/manager-daemon.mjs` |
+| Manager 守护（源） | `D:/01_Projects/Active/project-team-pm/services/manager-daemon.mjs` |
+| Manager 守护（本仓） | `node .team/tools/managerd.mjs`（init/--tools-only 时从技能复制） |
 | 宿主适配 | `D:/01_Projects/Active/project-team-pm/adapters/` |
 
 刷新本仓 CLI/模板（不改业务代码）：
 
 ```powershell
+node .team/tools/team.mjs init --tools-only
+# 或手动：
 Copy-Item -Force "D:\01_Projects\Active\project-team-pm\skill\scripts\team.mjs" ".team\tools\team.mjs"
+Copy-Item -Force "D:\01_Projects\Active\project-team-pm\skill\scripts\engagement.mjs" ".team\tools\engagement.mjs"
+Copy-Item -Force "D:\01_Projects\Active\project-team-pm\skill\scripts\managerd.mjs" ".team\tools\managerd.mjs"
 Copy-Item -Force "D:\01_Projects\Active\project-team-pm\skill\templates\*" ".team\tools\templates\"
 ```
 

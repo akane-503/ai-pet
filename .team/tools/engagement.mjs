@@ -179,6 +179,33 @@ function writeEngageFiles(ctx, e, api) {
   api.atomicWrite(path.join(dir, 'ADAPTER.md'), adapterInstallHint(e.toHost, api.loadConfig(ctx).controlPlane?.home) + '\n');
 }
 
+function writeLineageFile(ctx, e, api) {
+  if (!e?.id) return;
+  const dir = engDir(ctx, e.id);
+  api.ensureDir(dir);
+  const L = e.lineage || {};
+  const lines = [
+    `# Lineage · ${e.id}`,
+    '',
+    `- 方向：${e.fromHost || L.fromHost || '?'} → ${e.toHost || L.toHost || '?'}`,
+    `- 任务：${e.taskId || L.taskId || '—'}`,
+    `- 写集：${(L.write || e.scope?.write || []).join('; ') || '—'}`,
+    `- 租约：${L.leaseId || e.leaseId || '—'}`,
+    `- head：${L.head || e.inbound?.head || '—'}`,
+    `- 文件：${(L.files || e.inbound?.files || []).join('; ') || '—'}`,
+    `- out：${L.outAt || '—'}`,
+    `- start：${L.startedAt || '—'} (${L.startedBy || '—'})`,
+    `- deliver：${L.deliveredAt || '—'}`,
+    `- accept：${L.acceptedAt || '—'} (${L.acceptedBy || '—'})`,
+    `- integrate：${L.integrateAt || '—'} @ ${L.mergeSha || '—'}`,
+    `- finalize：${L.finalizedAt || '—'}`,
+    '',
+    '真相：`board.json.engagements` + 本文件；公告栏「外包 / 血缘」。',
+    '',
+  ];
+  api.atomicWrite(path.join(dir, 'LINEAGE.md'), lines.join('\n'));
+}
+
 function generateLaunchArtifacts(ctx, e, api) {
   const dir = engDir(ctx, e.id);
   api.ensureDir(dir);
@@ -300,7 +327,7 @@ export function createEngagementApi(api) {
   function cmdNew(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const title = must(opts.title, '--title');
+    const title = must(opts.title, 'title');
     const toHost = normalizeHost(opts.to || opts.host);
     const fromHost = normalizeHost(opts.from || 'generic');
     const taskId = opts.task ? String(opts.task) : null;
@@ -351,7 +378,7 @@ export function createEngagementApi(api) {
   function cmdOut(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const dry = opts['dry-run'] === true || opts.dry === true;
     const cfg = loadConfig(ctx);
     const ttl = Number(opts['ttl-ms'] || cfg.leaseTtlMs || 30 * 60 * 1000);
@@ -361,8 +388,9 @@ export function createEngagementApi(api) {
       assertTransition(e.status, 'out');
       if (e.taskId && st.tasks[e.taskId] && !dry) {
         const t = st.tasks[e.taskId];
+        // 出站独占写集：清掉该任务上所有旧租约（含 tk: claim），避免双租约/status 显示错乱
         for (const [lid, l] of Object.entries(st.leases)) {
-          if (l.taskId === e.taskId && String(l.owner || '').startsWith('engage:')) delete st.leases[lid];
+          if (l.taskId === e.taskId) delete st.leases[lid];
         }
         const leaseId = `L-eng-${id}-${Date.now().toString(36)}`;
         st.leases[leaseId] = {
@@ -378,6 +406,15 @@ export function createEngagementApi(api) {
         if (t.status === '待认领') t.status = '进行中';
         t.updatedAt = new Date().toISOString();
         e.leaseId = leaseId;
+        e.lineage = {
+          ...(e.lineage || {}),
+          fromHost: e.fromHost,
+          toHost: e.toHost,
+          taskId: e.taskId,
+          write: e.scope.write.length ? e.scope.write.slice() : (t.write || []).slice(),
+          leaseId,
+          outAt: new Date().toISOString(),
+        };
       }
       pushHistory(e, 'out', opts.by || 'manager', dry ? 'dry-run out' : 'outbound dispatched');
       e.outbound = {
@@ -409,12 +446,13 @@ export function createEngagementApi(api) {
   function cmdStart(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const by = opts.by || 'vendor';
     const result = mutate(ctx, (st) => {
       const e = mustEngage(st, id);
       assertTransition(e.status, 'in-progress');
       pushHistory(e, 'in-progress', by, opts.note || '');
+      e.lineage = { ...(e.lineage || {}), startedAt: e.updatedAt, startedBy: by };
       appendEvent(ctx, { event: 'engage.start', id, by });
       return e;
     });
@@ -426,7 +464,7 @@ export function createEngagementApi(api) {
   function cmdDeliver(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const head = opts.head ? String(opts.head) : '';
     const note = opts.note || '';
     const files = splitList(opts.files);
@@ -443,29 +481,44 @@ export function createEngagementApi(api) {
       e.evidence.push(ev);
       e.inbound = { ...(e.inbound || {}), ...ev };
       pushHistory(e, 'delivered', opts.by || e.toHost, note || 'delivered');
+      e.lineage = {
+        ...(e.lineage || {}),
+        fromHost: e.fromHost,
+        toHost: e.toHost,
+        taskId: e.taskId || null,
+        write: (e.scope?.write || []).slice(),
+        head: ev.head,
+        files: files.slice(),
+        leaseId: e.leaseId || null,
+        deliveredAt: ev.at,
+        note,
+      };
       if (e.taskId && st.tasks[e.taskId]) {
         const t = st.tasks[e.taskId];
         t.status = '待验收';
         t.updatedAt = e.updatedAt;
         t.evidence = t.evidence || [];
         t.evidence.push({ at: ev.at, head: ev.head, exit: 0, files, via: id });
+        t.lineage = { engagementId: id, ...(e.lineage || {}) };
       }
       appendEvent(ctx, { event: 'engage.deliver', id, head: ev.head, files: files.length });
       return e;
     });
     writeEngageFiles(ctx, result, api);
+    writeLineageFile(ctx, result, api);
     if (opts.json) return jsonOut(result);
     console.log(`${id} 已交付 (delivered)${dry ? ' dry-run' : ''}`);
-    console.log(`下一步：engage accept --id ${id} [--integrate]  或  engage reject --id ${id} --reason "..."`);
+    console.log(`下一步：engage accept --id ${id} [--integrate] [--finalize]  或  engage reject --id ${id} --reason "..."`);
   }
 
   function cmdAccept(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const dry = opts['dry-run'] === true;
     const cfg = loadConfig(ctx);
     const runGate = opts['skip-gate'] !== true;
+    const wantFinalize = opts.finalize === true;
     const st0 = readState(ctx);
     const e0 = mustEngage(st0, id);
     if (e0.status !== 'delivered') throw new TeamError('BAD_ENGAGE_STATE', `仅 delivered 可 accept（当前 ${e0.status}）`, 2);
@@ -484,13 +537,22 @@ export function createEngagementApi(api) {
       pushHistory(e, 'accepted', opts.by || 'manager', opts.note || (dry ? 'dry-run accept' : 'accepted'));
       e.inbound = { ...(e.inbound || {}), acceptedAt: e.updatedAt, gate };
       e.evidence.push({ kind: 'accept', at: e.updatedAt, gate });
+      e.lineage = { ...(e.lineage || {}), acceptedAt: e.updatedAt, acceptedBy: opts.by || 'manager' };
       if (e.taskId && st.tasks[e.taskId]) {
         const t = st.tasks[e.taskId];
-        if (opts.finalize === true) t.status = '已完成';
-        else if (t.status === '待验收' || t.status === '进行中') t.status = '待验收';
+        // --finalize 必须在 integrate 之后；此处只推到待验收，避免跳过集成
+        if (t.status === '待验收' || t.status === '进行中') t.status = '待验收';
         t.updatedAt = e.updatedAt;
+        t.lineage = { engagementId: id, ...(e.lineage || {}) };
       }
-      if (e.leaseId && st.leases[e.leaseId]) delete st.leases[e.leaseId];
+      // 清该任务全部租约（防止 out 前残留的 tk: 与 engage: 双租约）
+      if (e.taskId) {
+        for (const [lid, l] of Object.entries(st.leases)) {
+          if (l.taskId === e.taskId) delete st.leases[lid];
+        }
+      } else if (e.leaseId && st.leases[e.leaseId]) {
+        delete st.leases[e.leaseId];
+      }
       appendEvent(ctx, { event: 'engage.accept', id, dryRun: dry });
       if (opts.cr === true) {
         st.notes = st.notes || [];
@@ -499,28 +561,63 @@ export function createEngagementApi(api) {
       return e;
     });
     writeEngageFiles(ctx, result, api);
+    writeLineageFile(ctx, result, api);
 
     const wantIntegrate = opts.integrate === true
       || opts['auto-integrate'] === true
       || (opts.integrate !== false && cfg.engage?.autoIntegrate === true);
     let integrateResult = null;
+    let finalizeResult = null;
     if (wantIntegrate && result.taskId) {
       if (dry) {
         integrateResult = { dryRun: true, taskId: result.taskId, skipped: true };
         mutate(ctx, (st) => {
           const e = mustEngage(st, id);
           e.inbound = { ...(e.inbound || {}), integrate: integrateResult };
+          if (wantFinalize) e.inbound.finalize = { dryRun: true };
         });
-        console.log(`[dry-run] 将 integrate ${result.taskId}（未执行）`);
+        console.log(`[dry-run] 将 integrate ${result.taskId}${wantFinalize ? ' 并 finalize(accept)' : ''}（未执行）`);
       } else if (typeof api.integrate === 'function') {
         try {
-          api.integrate({ id: result.taskId, gate: opts.gate, quiet: opts.json === true || opts.quiet === true });
+          api.integrate({
+            id: result.taskId,
+            gate: opts.gate,
+            quiet: opts.json === true || opts.quiet === true || wantFinalize,
+          });
           integrateResult = { ok: true, taskId: result.taskId };
           mutate(ctx, (st) => {
             const e = mustEngage(st, id);
+            const t = st.tasks[result.taskId];
             e.inbound = { ...(e.inbound || {}), integrate: integrateResult };
+            e.lineage = {
+              ...(e.lineage || {}),
+              integrateAt: new Date().toISOString(),
+              mergeSha: t?.integration?.mergeSha || null,
+            };
+            if (t) t.lineage = { engagementId: id, ...(e.lineage || {}) };
             appendEvent(ctx, { event: 'engage.integrate', id, taskId: result.taskId });
           });
+          writeLineageFile(ctx, readState(ctx).engagements[id], api);
+          if (wantFinalize && typeof api.acceptTask === 'function') {
+            try {
+              api.acceptTask({
+                id: result.taskId,
+                quiet: opts.json === true || opts.quiet === true,
+                'human-ok': opts['human-ok'] === true,
+              });
+              finalizeResult = { ok: true, taskId: result.taskId };
+              mutate(ctx, (st) => {
+                const e = mustEngage(st, id);
+                e.inbound = { ...(e.inbound || {}), finalize: finalizeResult };
+                e.lineage = { ...(e.lineage || {}), finalizedAt: new Date().toISOString() };
+              });
+              writeLineageFile(ctx, readState(ctx).engagements[id], api);
+            } catch (ferr) {
+              finalizeResult = { ok: false, taskId: result.taskId, error: ferr.message, code: ferr.code };
+              console.error(`[engage] integrate 成功但 finalize(accept) 失败：${ferr.message}`);
+              if (ferr.hint) console.error(`next: ${ferr.hint}`);
+            }
+          }
         } catch (err) {
           integrateResult = { ok: false, taskId: result.taskId, error: err.message, code: err.code };
           mutate(ctx, (st) => {
@@ -534,22 +631,35 @@ export function createEngagementApi(api) {
       } else {
         console.log(`下一步手动：node .team/tools/team.mjs integrate --id ${result.taskId}`);
       }
+    } else if (wantFinalize && !wantIntegrate) {
+      console.log('提示：--finalize 需在 integrate 之后；请加 --integrate --finalize，或手动 integrate 后再 team accept');
     }
 
-    if (opts.json) return jsonOut({ engagement: readState(ctx).engagements[id], gate, integrate: integrateResult });
+    if (opts.json) {
+      return jsonOut({
+        engagement: readState(ctx).engagements[id],
+        gate,
+        integrate: integrateResult,
+        finalize: finalizeResult,
+      });
+    }
     console.log(`${id} 已接受 (accepted)${dry ? ' dry-run' : ''}`);
     if (!gate.skipped) console.log('  门禁：通过');
     if (result.taskId && !wantIntegrate) {
-      console.log(`  关联任务 ${result.taskId} → 待验收；可加 --integrate 或手动 integrate`);
+      console.log(`  关联任务 ${result.taskId} → 待验收；可加 --integrate [--finalize] 或手动 integrate`);
     }
     if (wantIntegrate && integrateResult?.ok) console.log(`  已自动 integrate ${result.taskId}`);
+    if (finalizeResult?.ok) console.log(`  已 finalize → 已完成 ${result.taskId}`);
+    else if (wantIntegrate && integrateResult?.ok && !wantFinalize) {
+      console.log(`  下一步：node .team/tools/team.mjs accept --id ${result.taskId}（或下次加 --finalize）`);
+    }
   }
 
   function cmdReject(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
-    const reason = must(opts.reason, '--reason');
+    const id = must(opts.id, 'id');
+    const reason = must(opts.reason, 'reason');
     const result = mutate(ctx, (st) => {
       const e = mustEngage(st, id);
       assertTransition(e.status, 'rejected');
@@ -572,12 +682,18 @@ export function createEngagementApi(api) {
   function cmdCancel(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const result = mutate(ctx, (st) => {
       const e = mustEngage(st, id);
       assertTransition(e.status, 'cancelled');
       pushHistory(e, 'cancelled', opts.by || 'manager', opts.reason || '');
-      if (e.leaseId && st.leases[e.leaseId]) delete st.leases[e.leaseId];
+      if (e.taskId) {
+        for (const [lid, l] of Object.entries(st.leases)) {
+          if (l.taskId === e.taskId) delete st.leases[lid];
+        }
+      } else if (e.leaseId && st.leases[e.leaseId]) {
+        delete st.leases[e.leaseId];
+      }
       appendEvent(ctx, { event: 'engage.cancel', id });
       return e;
     });
@@ -607,7 +723,7 @@ export function createEngagementApi(api) {
   function cmdShow(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const st = readState(ctx);
     const e = mustEngage(st, id);
     if (opts.json) return jsonOut(e);
@@ -618,14 +734,33 @@ export function createEngagementApi(api) {
   function cmdBrief(opts) {
     const ctx = resolveContext();
     requireInitialized(ctx);
-    const id = must(opts.id, '--id');
+    const id = must(opts.id, 'id');
     const p = path.join(engDir(ctx, id), 'BRIEF.md');
     if (!fs.existsSync(p)) throw new TeamError('NO_BRIEF', `缺少 ${p}`, 2, '先 engage new / out');
     if (opts.json) return jsonOut({ path: p, content: fs.readFileSync(p, 'utf8') });
     console.log(fs.readFileSync(p, 'utf8'));
   }
 
+  function printEngageHelp() {
+    console.log(`外包（engage）用法：
+  engage new --title "..." --to <host> [--from cursor] [--task T-001] [--write "a;b"] [--verify "cmd"]
+  engage out --id E-001 [--dry-run]
+  engage start --id E-001 --by <host>
+  engage deliver --id E-001 --head <sha> [--files "a;b"] [--note "..."] [--dry-run]
+  engage accept --id E-001 [--skip-gate] [--integrate] [--finalize] [--cr] [--dry-run]
+  engage reject --id E-001 --reason "..."
+  engage cancel --id E-001 [--reason "..."]
+  engage list|show|brief --id E-001
+
+推荐闭环：out → start → deliver → accept --integrate --finalize
+血缘：.team/engagements/E-***/LINEAGE.md + board.json.engagements`);
+  }
+
   function dispatch(sub, opts) {
+    if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
+      printEngageHelp();
+      return;
+    }
     const map = {
       new: wrap(cmdNew), out: wrap(cmdOut), start: wrap(cmdStart), deliver: wrap(cmdDeliver),
       accept: wrap(cmdAccept), reject: wrap(cmdReject), cancel: wrap(cmdCancel),
@@ -633,7 +768,7 @@ export function createEngagementApi(api) {
     };
     if (!map[sub]) {
       throw new TeamError('BAD_SUB', `未知 engage 子命令：${sub || '(空)'}`, 2,
-        'engage new|out|start|deliver|accept|reject|cancel|list|show|brief');
+        'engage new|out|start|deliver|accept|reject|cancel|list|show|brief|help');
     }
     return map[sub](opts);
   }
