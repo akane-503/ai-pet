@@ -460,7 +460,7 @@
     gif.style.display = 'none'; gif.removeAttribute('src');
     bubble.classList.remove('notice', 'compact'); bubble.classList.add('handoff', 'open');
     // 默认靠右键菜单操作；仅外包可「已交回」时露出气泡按钮，避免挤占云朵气泡。
-    bubble.classList.toggle('handoff-actions-on', !!view.canMarkReturned);
+    bubble.classList.toggle('handoff-actions-on', !!(view.canCopy || view.canMarkReturned || !view.done));
     bubbleMode = 'status'; handoffContent.hidden = false;
     puffText.textContent = '';
     puffText.title = '';

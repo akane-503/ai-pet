@@ -1,4 +1,4 @@
-# DSH draft prefill through Windows UI Automation; never submits a message.
+﻿# DSH draft prefill through Windows UI Automation; never submits a message.
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [Text.Encoding]::UTF8
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -18,6 +18,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class DshDraftKeys {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
     public static void Paste() {
         keybd_event(0x11,0,0,UIntPtr.Zero); keybd_event(0x56,0,0,UIntPtr.Zero);
@@ -27,24 +28,57 @@ public static class DshDraftKeys {
 '@
     $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$request.hwnd)
     $owner = Get-Process -Id $root.Current.ProcessId
-    if ($owner.ProcessName -ne 'DSH Desktop') { Result 'wrong-window' }
+    if ($owner.ProcessName -notin @('DSH Desktop', 'DSH NEXT')) { Result 'wrong-window' }
+    if (($owner.ProcessName -eq 'DSH NEXT') -ne ($request.next -eq $true)) { Result 'wrong-window' }
     $workspaceName = Split-Path -Leaf $request.workspace.TrimEnd('\','/')
     $editCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Edit)
     $treeCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::TreeItem)
+    $previousSelection = ''; $targetProjectRuntime = ''
+    if ($request.next) {
+        if (-not $request.workspaceTitle) { Result 'workspace-unregistered' }
+        $workspaceName = [string]$request.workspaceTitle
+        $trees = $root.FindAll([Windows.Automation.TreeScope]::Descendants,$treeCondition)
+        $projects = @($trees | Where-Object { $_.Current.ClassName -match '_projectRow' -and $_.Current.Name -eq $workspaceName })
+        if ($projects.Count -ne 1) { Result 'workspace-unconfirmed' }
+        $targetProjectRuntime = $projects[0].GetRuntimeId() -join ','
+        foreach ($row in $trees) {
+            $selection = $null
+            if ($row.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection) -and $selection.Current.IsSelected) {
+                $previousSelection = $row.GetRuntimeId() -join ','
+            }
+        }
+        if ([DshDraftKeys]::GetForegroundWindow().ToInt64() -ne [long]$request.hwnd) { Result 'focus-unconfirmed' }
+        $bounds = $projects[0].Current.BoundingRectangle
+        if ($projects[0].Current.IsOffscreen -or $bounds.IsEmpty) { Result 'workspace-offscreen' }
+        # The shipped NEXT sidebar exposes project actions only while hovered.
+        [void][DshDraftKeys]::SetCursorPos([int]($bounds.Left + $bounds.Width / 2), [int]($bounds.Top + $bounds.Height / 2))
+        Start-Sleep -Milliseconds 180
+        $buttonCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button)
+        $buttons = $projects[0].FindAll([Windows.Automation.TreeScope]::Descendants,$buttonCondition)
+        $names = @(('New session in ' + $workspaceName), ('在“{0}”中新建会话' -f $workspaceName))
+        $newSession = @($buttons | Where-Object { $_.Current.Name -in $names -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen })
+        $invoke = $null
+        if ($newSession.Count -ne 1 -or -not $newSession[0].TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$invoke)) { Result 'workspace-action-unavailable' }
+        if ([DshDraftKeys]::GetForegroundWindow().ToInt64() -ne [long]$request.hwnd) { Result 'focus-unconfirmed' }
+        $invoke.Invoke()
+    }
     $code = 'input-unavailable'
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     while ([DateTime]::UtcNow -lt $deadline) {
         $trees = $root.FindAll([Windows.Automation.TreeScope]::Descendants,$treeCondition)
-        $header = ''; $selectedWorkspace = ''; $workspaceMatchCount = 0
+        $header = ''; $selectedWorkspace = ''; $workspaceMatchCount = 0; $selectedRuntime = ''
         foreach ($row in $trees) {
             if ($row.Current.ClassName -match '_projectRow') {
-                $header = $row.Current.Name
-                if ($header -eq $workspaceName) { $workspaceMatchCount++ }
+                # Hover actions contribute their labels to a project's accessible
+                # name. Keep the verified project row identity across that change.
+                $isTarget = if ($request.next) { ($row.GetRuntimeId() -join ',') -eq $targetProjectRuntime } else { $row.Current.Name -eq $workspaceName }
+                $header = if ($isTarget) { $workspaceName } else { $row.Current.Name }
+                if ($isTarget) { $workspaceMatchCount++ }
             }
             $selection = $null
-            if ($row.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection) -and $selection.Current.IsSelected) { $selectedWorkspace = $header }
+            if ($row.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection) -and $selection.Current.IsSelected) { $selectedWorkspace = $header; $selectedRuntime = $row.GetRuntimeId() -join ',' }
         }
-        if ($selectedWorkspace -ne $workspaceName -or $workspaceMatchCount -ne 1) {
+        if ($selectedWorkspace -ne $workspaceName -or $workspaceMatchCount -ne 1 -or ($request.next -and $selectedRuntime -eq $previousSelection)) {
             $code = 'workspace-unconfirmed'
             Start-Sleep -Milliseconds 250
             continue

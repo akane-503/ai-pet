@@ -23,18 +23,19 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .bubble.open { pointer-events: auto; }
 .bubble.open svg path, .bubble.open svg ellipse { pointer-events: visiblePainted; cursor: pointer; }
 .bubble.notice .bshape, .bubble.notice .b1, .bubble.notice .b2 { fill: #fff; stroke: var(--line); }
-.text { position: absolute; left: 44.25%; top: 38%; transform: translate(-50%, -50%); text-align: center; color: var(--text); line-height: 1.15; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .16s ease, transform .3s ease; }
+.text { position: absolute; left: 44.25%; top: 37%; width: 62%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 6); text-align: center; color: var(--text); line-height: 1.4; white-space: normal; pointer-events: none; opacity: 0; transition: opacity .16s ease, transform .3s ease; }
 .bubble.open .text { opacity: 1; transition: opacity .16s ease .48s, transform .3s ease; }
 .root.left .text { transform: translate(-50%, -50%) scaleX(-1); }
 .text.fade { animation: tfade .22s ease; }
 @keyframes tfade { from { opacity: 0 } to { opacity: 1 } }
-.label { font-size: calc(var(--u) * 66); font-weight: 600; letter-spacing: .06em; }
-.label.tight { font-size: calc(var(--u) * 52); letter-spacing: .02em; }
-.amount { font-size: calc(var(--u) * 128); font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.label { font-size: calc(var(--u) * 68); font-weight: 700; letter-spacing: 0; line-height: 1.35; }
+.label.tight { font-size: calc(var(--u) * 58); }
+.label.wrap { font-size: calc(var(--u) * 58); line-height: 1.45; max-width: 100%; }
+.amount { font-size: calc(var(--u) * 124); font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .amount.mid { font-size: calc(var(--u) * 104); }
-.amount.small { font-size: calc(var(--u) * 84); }
-.hint { font-size: calc(var(--u) * 56); color: var(--hint); letter-spacing: .02em; margin-top: calc(var(--u) * 9); min-height: calc(var(--u) * 64); line-height: 1.15; }
-.wrap { white-space: normal; max-width: calc(var(--u) * 600); line-height: 1.2; }
+.amount.small { font-size: calc(var(--u) * 86); }
+.hint { font-size: calc(var(--u) * 54); color: var(--hint); letter-spacing: 0; margin-top: 0; min-height: 0; line-height: 1.4; }
+.wrap { white-space: normal; max-width: 100%; line-height: 1.45; overflow-wrap: break-word; }
 .bubble.notice .text { color: var(--text); width: 61%; top: 36%; max-height: 51%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; pointer-events: auto; cursor: pointer; overscroll-behavior: contain; }
 /* compact（交接进度）：大气泡左上角长出一个小云朵，小云朵写"交接 → 目标"，大气泡写进度 */
 .bubble .puff { stroke: var(--line); opacity: 0; transform: scale(.7); transform-box: fill-box; transform-origin: 50% 100%; transition: opacity .2s ease, transform .2s ease; }
@@ -44,18 +45,18 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .bubble.open.compact .puff-text { opacity: 1; transition-delay: .55s; }
 .root.left .puff-text { transform: translate(-50%, -50%) scaleX(-1); }
 .bubble.compact .text { width: 61%; top: 47%; white-space: normal; }
-.bubble.notice .label, .bubble.compact .label { font-size: max(13px, calc(var(--u) * 56)); letter-spacing: 0; line-height: 1.25; }
-.bubble.notice .amount, .bubble.compact .amount { font-size: max(12px, calc(var(--u) * 50)); font-weight: 600; line-height: 1.35; margin-top: calc(var(--u) * 12); }
-.bubble.notice .hint, .bubble.compact .hint { color: var(--hint); font-size: max(11px, calc(var(--u) * 40)); min-height: 0; line-height: 1.25; }
-.bubble.notice .wrap, .bubble.compact .wrap { max-width: none; overflow-wrap: anywhere; }
-.bubble.compact .label { font-size: calc(var(--u) * 62); }
-.bubble.compact .amount { font-size: calc(var(--u) * 72); font-weight: 800; margin-top: calc(var(--u) * 8); }
+.bubble.notice .label, .bubble.compact .label { font-size: calc(var(--u) * 58); letter-spacing: 0; line-height: 1.4; }
+.bubble.notice .amount, .bubble.compact .amount { font-size: calc(var(--u) * 54); font-weight: 700; line-height: 1.4; margin-top: 0; white-space: normal; }
+.bubble.notice .hint, .bubble.compact .hint { color: var(--hint); font-size: calc(var(--u) * 50); min-height: 0; line-height: 1.4; }
+.bubble.notice .wrap, .bubble.compact .wrap { max-width: none; overflow-wrap: break-word; }
+.bubble.compact .label { font-size: calc(var(--u) * 60); }
+.bubble.compact .amount { font-size: calc(var(--u) * 66); font-weight: 800; }
 .bubble.compact .hint { font-size: calc(var(--u) * 52); }
 .bubble.compact .amount, .bubble.compact .hint { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.bubble.compact .amount { line-height: 1.18; }
-.bubble.compact .hint { line-height: 1.2; }
-.bubble.compact.dense .amount { font-size: calc(var(--u) * 56); }
-.bubble.compact.dense .hint { font-size: calc(var(--u) * 44); }
+.bubble.compact .amount { line-height: 1.35; }
+.bubble.compact .hint { line-height: 1.4; }
+.bubble.compact.dense .amount { font-size: calc(var(--u) * 58); }
+.bubble.compact.dense .hint { font-size: calc(var(--u) * 50); }
 /* 交接沿用聊天气泡轮廓与角色色，文字和操作有自己的布局。 */
 .handoff-shape { display: none; fill: #fff; stroke: var(--line); }
 .handoff-content[hidden], .handoff-actions button[hidden] { display: none; }
@@ -64,11 +65,11 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 @keyframes handoff-cloud { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: none; } }
 .bubble.handoff .puff { display: none; }
 .bubble.handoff .puff-text { display: none; }
-.handoff-content { position: absolute; left: 44.25%; top: 35.43%; width: 60%; display: flex; flex-direction: column; gap: calc(var(--u) * 14); transform: translate(-50%, -50%); color: var(--text); text-align: center; pointer-events: auto; cursor: default; }
+.handoff-content { position: absolute; left: 44.25%; top: 37%; width: 64%; display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 10); transform: translate(-50%, -50%); color: var(--text); text-align: center; pointer-events: auto; cursor: default; }
 .root.left .handoff-content { transform: translate(-50%, -50%) scaleX(-1); }
-.handoff-target { font-size: calc(var(--u) * 38); font-weight: 500; opacity: .75; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.25; }
-.handoff-heading { font-size: calc(var(--u) * 66); font-weight: 700; line-height: 1.25; margin: 0; white-space: nowrap; }
-.handoff-detail { font-size: calc(var(--u) * 40); line-height: 1.3; margin: 0; max-width: 100%; white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.handoff-target { font-size: calc(var(--u) * 48); font-weight: 600; opacity: .8; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.3; max-width: 100%; }
+.handoff-heading { font-size: calc(var(--u) * 62); font-weight: 700; line-height: 1.35; margin: 0; white-space: normal; overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.handoff-detail { font-size: calc(var(--u) * 50); line-height: 1.45; margin: 0; max-width: 100%; white-space: pre-line; overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .handoff-bar { width: 70%; height: calc(var(--u) * 12); margin: calc(var(--u) * 4) auto 0; border-radius: 99px; overflow: hidden; background: color-mix(in srgb, var(--line) 18%, white); }
 .handoff-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--line); transition: width 0.9s linear; }
 .handoff-steps { display: flex; justify-content: center; gap: calc(var(--u) * 16); margin: calc(var(--u) * 9) 0 calc(var(--u) * 14); }
@@ -76,11 +77,11 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .handoff-steps i.done { background: var(--line); }
 .handoff-steps i.current { background: var(--text); animation: handoff-pulse 1.8s ease-in-out infinite; }
 @keyframes handoff-pulse { 50% { opacity: .35; } }
-.handoff-actions { display: flex; justify-content: center; gap: calc(var(--u) * 20); }
+.handoff-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: calc(var(--u) * 12); max-width: 100%; }
 .bubble.handoff .handoff-steps { display: none; }
 .bubble.handoff:not(.handoff-actions-on) .handoff-actions { display: none; }
 .bubble.handoff.handoff-actions-on .handoff-actions { display: flex; }
-.handoff-actions button { border: 0; border-radius: 999px; padding: calc(var(--u) * 9) calc(var(--u) * 25); color: var(--text); background: color-mix(in srgb, var(--line) 9%, white); font: 600 calc(var(--u) * 36)/1.25 "Microsoft YaHei UI", sans-serif; cursor: pointer; transition: background .15s, transform .15s; }
+.handoff-actions button { border: 0; border-radius: 999px; padding: calc(var(--u) * 8) calc(var(--u) * 22); color: var(--text); background: color-mix(in srgb, var(--line) 9%, white); font: 600 calc(var(--u) * 46)/1.3 "Microsoft YaHei UI", sans-serif; cursor: pointer; transition: background .15s, transform .15s; }
 .handoff-actions button:first-child { color: white; background: var(--line); }
 .handoff-actions button:hover { transform: translateY(-1px); filter: brightness(1.12); }
 .handoff-actions button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }

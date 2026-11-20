@@ -20,15 +20,53 @@ test('foreground and recent user choices beat background session writes; manual 
   assert.equal(activity.selectCharacter({ ...options, activity: {} }).character, 'deepseek');
 });
 
+test('an unrecognized browser page does not yield to background Codex activity', () => {
+  const now = Date.now();
+  const options = { appearance: { character: 'auto', favorite: 'deepseek' }, now, activity: { active: 'codex', details: { codex: now } } };
+  const held = activity.selectCharacter({ ...options, foreground: { character: null, at: now, browsing: true }, recent: { character: 'gemini', at: now - 30000 } });
+  assert.equal(held.character, 'gemini');
+  const idle = activity.selectCharacter({ ...options, foreground: { character: null, at: now, browsing: true }, recent: { character: 'codex', at: now - 5 * 60000 } });
+  assert.equal(idle.character, 'deepseek');
+  assert.match(idle.why, /不跟后台/);
+});
+
+test('Codex history.jsonl mtime alone is not using Codex', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-codex-idle-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'sessions', '2020', '01', '01'), { recursive: true });
+    const old = path.join(dir, 'sessions', '2020', '01', '01', 'a.jsonl');
+    fs.writeFileSync(old, '{}\n');
+    const oldTime = new Date('2020-01-01');
+    fs.utimesSync(old, oldTime, oldTime);
+    fs.writeFileSync(path.join(dir, 'history.jsonl'), '{}\n');
+    const r = activity.detect({
+      codexDir: dir, windowMin: 15,
+      claudeDir: path.join(dir, 'no-claude'),
+      geminiDir: path.join(dir, 'no-gemini'),
+      qwenDir: path.join(dir, 'no-qwen'),
+      zcodeDir: path.join(dir, 'no-zcode'),
+      kimiDir: path.join(dir, 'no-kimi'),
+    }, [{ type: 'codex', enabled: true, codexHome: dir }]);
+    assert.ok((r.details.codex || 0) < Date.now() - 24 * 3600 * 1000);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('native process identity survives task titles; spinner detection is restricted to terminals', () => {
   assert.equal(activity.characterForWindow({ title: '桌宠需求 · 项目', processName: 'ChatGPT.exe' }), 'codex');
   assert.equal(activity.characterForWindow({ title: '工作区', processName: 'ZCode.exe' }), 'zcode');
   assert.equal(activity.characterForWindow({ title: '◑ 修复桌宠', processName: 'WindowsTerminal.exe' }), 'claude');
   assert.equal(activity.characterForWindow({ title: '◑ 无关下载', processName: 'explorer.exe' }), null);
   assert.equal(activity.characterForWindow({ title: 'Gemini - Google Chrome', processName: 'chrome.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'Google Gemini - Google Chrome', processName: 'chrome.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'NoteLLM - Google Chrome', processName: 'chrome.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'NotebookLM and 2 more pages - Microsoft Edge', processName: 'msedge.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: '帮我改设置 - Gemini - Google Chrome', processName: 'chrome.exe' }), 'gemini');
   assert.equal(activity.characterForWindow({ title: '新的对话', processName: 'Gemini.exe' }), 'gemini');
   assert.equal(activity.characterForWindow({ title: 'Gemini', processName: 'unknown.exe' }), 'gemini');
   assert.equal(activity.characterForWindow({ title: 'Google Gemini', processName: 'unknown.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: 'Google Gemini 和另外 2 个标签页 - 个人 - Microsoft Edge', processName: 'msedge.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: '我的笔记本 - NoteLLM - 个人 - Microsoft Edge', processName: 'msedge.exe' }), 'gemini');
+  assert.equal(activity.characterForWindow({ title: '如何安装 Gemini Desktop - 个人 - Google Chrome', processName: 'chrome.exe' }), null);
   assert.equal(activity.characterForWindow({ title: '如何安装 Gemini Desktop - Google Chrome', processName: 'chrome.exe' }), null);
   assert.equal(activity.characterForWindow({ title: '如何安装 Claude Code - Google Chrome', processName: 'chrome.exe' }), null);
 });
@@ -252,4 +290,27 @@ test('a relabeled known window is not mistaken for a brand-new gift window', () 
   const ev = diffSnapshots(prev, next, provider, config);
   assert.equal(ev.filter((e) => e.claim).length, 0, 'relabel must not fire a claimable new-window gift');
   assert.equal(ev.length, 0);
+});
+
+
+test('DSH NEXT resolves registered workspaces by full path and refuses ambiguous UI titles', (t) => {
+  const draft = require('../src/main/desktop-draft');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-dsh-workspace-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(home, 'storages'));
+  const project = path.join(home, 'actual-project');
+  const save = rows => fs.writeFileSync(path.join(home, 'storages', 'workspace.json'), JSON.stringify({ tables: { workspaces: rows } }));
+  const spec = { kind: 'app', target: path.join(home, 'DSH NEXT.exe') };
+  assert.equal(draft.isDsh(spec), true);
+  assert.equal(draft.isDsh({ ...spec, target: path.join(home, 'DSH Desktop.exe') }), true);
+  assert.equal(draft.isDsh({ ...spec, target: path.join(home, 'other.exe') }), false);
+  save({ one: { path: project, title: 'Renamed project' } });
+  assert.deepEqual(draft.registeredWorkspace(project, home), { title: 'Renamed project' });
+  assert.equal(draft.registeredWorkspace(path.join(home, 'elsewhere'), home), null);
+  save({ one: { path: project, title: 'Same' }, two: { path: path.join(home, 'other'), title: 'Same' } });
+  assert.equal(draft.registeredWorkspace(project, home), null);
+  save({ one: { path: project, title: 'First' }, two: { path: project, title: 'Second' } });
+  assert.equal(draft.registeredWorkspace(project, home), null);
+  fs.writeFileSync(path.join(home, 'storages', 'workspace.json'), '{broken');
+  assert.equal(draft.registeredWorkspace(project, home), null);
 });

@@ -25,9 +25,18 @@
     return cfg;
   }
   function applyTheme(d) {
-    const pal = d.colors || (meta && meta.characters.find((c) => c.id === d.character) || {}).colors;
-    if (!pal) return;
-    ['--line', '--text', '--hint'].forEach((k, i) => document.documentElement.style.setProperty(k, pal[i]));
+    const ch = meta && meta.characters.find((c) => c.id === d.character);
+    const pal = d.colors || (ch || {}).colors;
+    if (pal) ['--line', '--text', '--hint'].forEach((k, i) => document.documentElement.style.setProperty(k, pal[i]));
+    const who = document.getElementById('brand-who');
+    if (who && ch) who.textContent = ch.name;
+  }
+  function visibleMessage(body) {
+    return String(body || '')
+      .replace(/\s*[·→]\s*交给\s+\S+\s*$/u, '')
+      .replace(/\s*→\s*[A-Za-z][\w.-]*\s*$/u, '')
+      .replace(/^return\s+/i, '')
+      .trim();
   }
 
   const FIELD_DEFS = {
@@ -281,7 +290,24 @@
     document.querySelectorAll('[data-a]').forEach((el) => { const k = el.dataset.a; if (el.type === 'checkbox') el.checked = !!ap[k]; else el.value = ap[k] ?? ''; });
     $('#scale-val').textContent = Math.round(ap.scale * 100) + '%';
     $('#autostart').checked = !!cfg.autostart; $('#interval').value = cfg.refresh.intervalSec; $('#news-interval').value = cfg.refresh.newsIntervalMin;
+    renderHandoffStyleCards();
   }
+  // 交接操作样式：点卡片只切预览，保存时随 cfg.appearance 一起生效
+  function renderHandoffStyleCards() {
+    const cur = ['classic', 'orbit', 'edge'].includes(cfg.appearance.handoffActionStyle) ? cfg.appearance.handoffActionStyle : 'classic';
+    document.querySelectorAll('#handoff-style-cards [data-style]').forEach((b) => {
+      const on = b.dataset.style === cur;
+      b.classList.toggle('selected', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  $('#handoff-style-cards').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-style]');
+    if (!card || !cfg) return;
+    cfg.appearance.handoffActionStyle = card.dataset.style;
+    renderHandoffStyleCards();
+    $('#save-msg').textContent = '有未保存的更改';
+  });
   document.querySelectorAll('[data-a]').forEach((el) => el.addEventListener('input', () => {
     const k = el.dataset.a; cfg.appearance[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' || el.type === 'range' ? Number(el.value) : el.value);
     if (k === 'scale') $('#scale-val').textContent = Math.round(el.value * 100) + '%';
@@ -291,6 +317,7 @@
   $('#recover-pet').addEventListener('click', () => window.pet.send('pet:recover'));
   $('#interval').addEventListener('input', (e) => { cfg.refresh.intervalSec = Number(e.target.value); });
   $('#news-interval').addEventListener('input', (e) => { cfg.refresh.newsIntervalMin = Number(e.target.value); });
+
   function imgFor(id) {
     const ap = cfg.appearance; const custom = (ap.customImages || {})[id];
     if (custom) return custom.replace(/\\/g, '/');
@@ -440,7 +467,7 @@
   function renderNotifications() {
     const list = (data && data.notifications) || [];
     const pending = new Set(((data && data.giftClaims) || []).filter((c) => !c.claimed && !c.resolved).map((c) => c.key));
-    $('#n-list').innerHTML = list.length ? list.map((n) => `<div class="n-item ${n.read ? '' : 'unread'}"><span class="t">${new Date(n.ts).toLocaleString()}</span><div class="b"><b>${esc(n.title)}</b>${esc(n.body)}${n.link ? ` <a href="#" data-link="${esc(n.link)}">打开</a>` : ''}${n.claimKey && pending.has(n.claimKey) ? ` <a href="#" data-claim="${esc(n.claimKey)}">已领取</a>` : ''}</div></div>`).join('') : '<p class="hint">还没有消息。额度重置、送额度、模型上新、公告都会出现在这里。</p>';
+    $('#n-list').innerHTML = list.length ? list.map((n) => `<div class="n-item ${n.read ? '' : 'unread'}"><span class="t">${new Date(n.ts).toLocaleString()}</span><div class="b"><b>${esc(n.title)}</b><span class="msg">${esc(visibleMessage(n.body))}</span>${n.link ? ` <a href="#" data-link="${esc(n.link)}">打开</a>` : ''}${n.claimKey && pending.has(n.claimKey) ? ` <a href="#" data-claim="${esc(n.claimKey)}">已领取</a>` : ''}</div></div>`).join('') : '<p class="hint">还没有消息。额度重置、送额度、模型上新和你真正发起的交接会出现在这里。测试用的临时交接不会再记进来。</p>';
     const unread = list.filter((n) => !n.read).length; $('#unread').textContent = unread; $('#unread').classList.toggle('hidden', !unread);
   }
   $('#n-list').addEventListener('click', (e) => { const l = e.target.dataset.link; if (l) { e.preventDefault(); window.pet.send('open-external', l); } const ck = e.target.dataset.claim; if (ck) { e.preventDefault(); window.pet.send('gift:claim', ck); } });
@@ -465,7 +492,7 @@
     meta = await window.pet.invoke('meta');
     cfg = await window.pet.invoke('config:get');
     baseline = clone(cfg);
-    applyTheme({ character: cfg.appearance.character === 'auto' ? cfg.appearance.favorite : cfg.appearance.character });
+    applyTheme(data && data.colors ? data : { character: cfg.appearance.character === 'auto' ? (data && data.character) || cfg.appearance.favorite : cfg.appearance.character });
     $('#userdata').textContent = meta.userData;
     $('#about-meta').textContent = `版本 ${meta.version} · Electron ${meta.electron} · 窗口吸附 ${meta.snapAvailable ? '可用' : '不可用（koffi 未加载）'} · 程序目录 ${meta.root}`;
     $('#feature-handoff').checked = cfg.features?.handoff !== false;

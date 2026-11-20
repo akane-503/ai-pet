@@ -96,13 +96,16 @@ function metaFromHandoff(file) {
  * @param {{ engageId: string, repoRoot?: string, host?: string }} opts
  * @returns {{ handoffFile: string, latestPath: string, returnedMarker: string|null, engageId: string, nextSteps: string[] }}
  */
-function writeReturnReceipt({ engageId, repoRoot = '', host = '' } = {}) {
+function writeReturnReceipt({ engageId, repoRoot = '', host = '', home = '' } = {}) {
   const id = String(engageId || '').trim();
   if (!id) throw new Error('writeReturnReceipt: engageId required');
-  fs.mkdirSync(CACHE, { recursive: true });
-  fs.mkdirSync(path.dirname(LATEST), { recursive: true });
+  const base = home ? path.resolve(home) : os.homedir();
+  const cache = path.join(base, '.handoff', 'cache');
+  const latest = path.join(base, '.handoff', 'latest.txt');
+  fs.mkdirSync(cache, { recursive: true });
+  fs.mkdirSync(path.dirname(latest), { recursive: true });
   const sid = sanitize(id);
-  const target = path.join(CACHE, `HANDOFF-RETURN-${sid}.md`);
+  const target = path.join(cache, `HANDOFF-RETURN-${sid}.md`);
   const next = [`team engage deliver --id ${id}`, `team engage in --id ${id}`];
   const root = repoRoot && path.isAbsolute(repoRoot) ? repoRoot : '';
   const meta = {
@@ -130,7 +133,7 @@ function writeReturnReceipt({ engageId, repoRoot = '', host = '' } = {}) {
     .filter((line, i, arr) => !(line === '' && arr[i - 1] === ''))
     .join('\n');
   fs.writeFileSync(target, body, 'utf8');
-  fs.appendFileSync(LATEST, `${target}${os.EOL}`, 'utf8');
+  fs.appendFileSync(latest, `${target}${os.EOL}`, 'utf8');
 
   let returnedMarker = null;
   if (root) {
@@ -157,11 +160,18 @@ function writeReturnReceipt({ engageId, repoRoot = '', host = '' } = {}) {
   }
   return {
     handoffFile: target,
-    latestPath: LATEST,
+    latestPath: latest,
     returnedMarker,
     engageId: id,
     nextSteps: next,
   };
+}
+
+function shownHandoffText(goal, meta, isReturn) {
+  const text = String(goal || '').replace(/\s*→\s*[A-Za-z][\w.-]*\s*$/u, '').replace(/^return\s+/i, '').trim();
+  if (!isReturn) return text;
+  const id = meta && String(meta.engageId || '').trim();
+  return id ? `${id} 已交回` : (text ? `${text} 已交回` : '已交回');
 }
 
 /** sponsor-gate | deliverable-ready | returned, or '' when this file is not a sponsor moment. */
@@ -220,7 +230,7 @@ function viewFromLatest(latest, goalOf, opts = {}) {
     id: `ext-${latest.at}`,
     target: presented ? presented.target : '外部交接',
     heading: presented ? presented.heading : '收到交接文件',
-    detail: presented ? presented.detail : (meta.host ? `${goal} · ${meta.host}` : goal),
+    detail: presented ? presented.detail : shownHandoffText(goal, meta, false),
     project: '',
     step: 4,
     steps: ['ok', 'ok', 'ok', 'ok'],
@@ -250,7 +260,7 @@ function notificationFromLatest(latest, goalOf) {
   if (!kind) {
     return {
       title: '收到 AI 交接',
-      body: meta.host ? `${goal} → ${meta.host}` : goal,
+      body: shownHandoffText(goal, meta, false),
       file: latest.file,
       host: meta.host,
     };
@@ -395,6 +405,34 @@ function pruneHandoffInbox(notifications) {
   return { list: keep, removed, kept };
 }
 
+function markedProjectRoot(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const b = Buffer.alloc(16384);
+    const n = fs.readSync(fd, b, 0, b.length, 0);
+    const match = /<!-- ai-pet-project:(.+?) -->/.exec(b.toString('utf8', 0, n));
+    const root = match && JSON.parse(match[1]).root;
+    return typeof root === 'string' ? root : '';
+  } catch (_) { return ''; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+function underTmp(p) {
+  if (!p) return false;
+  const tmp = path.resolve(os.tmpdir()).toLowerCase();
+  const abs = path.resolve(String(p)).toLowerCase();
+  return abs === tmp || abs.startsWith(tmp + path.sep);
+}
+/** 测试写进系统临时目录的交接文件，不当成用户真的收到了某个工具。文件自己在临时目录里也算，不要求认得出工作区。 */
+function isScratchHandoff(file, workspaceOf) {
+  if (!file) return false;
+  if (underTmp(file) || underTmp(markedProjectRoot(file))) return true;
+  if (typeof workspaceOf !== 'function') return false;
+  let root = '';
+  try { root = workspaceOf(file) || ''; } catch (_) { return false; }
+  return underTmp(root);
+}
+
 /** Tool id for takeoverPrompt — prefer HANDOFF meta host over hard-coded cursor. */
 function toolForExternalHandoff(file, fallback = 'cursor') {
   const meta = metaFromHandoff(file);
@@ -407,6 +445,7 @@ module.exports = {
   notificationFromLatest,
   metaFromHandoff,
   toolForExternalHandoff,
+  isScratchHandoff,
   writeReturnReceipt,
   repoRootFromBrief,
   phaseOf,

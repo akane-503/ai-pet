@@ -39,6 +39,79 @@ input[type=checkbox] { accent-color: var(--line); margin: 0; }
 .btns #launch-btn:hover { background: color-mix(in srgb, var(--line) 85%, black); }
 .btns button.quit { color: #d93d3a; flex: 0 0 auto; border-color: transparent; }
 .btns button.quit:hover { background: #fdecec; }
+.project-view { margin-top: 10px; border-top: 1px solid color-mix(in srgb, var(--hint) 60%, white); padding-top: 8px; }
+.project-view summary { cursor: pointer; font-weight: 700; }
+.project-view form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin-top: 8px; }
+.project-view form label { grid-column: 1 / -1; color: var(--text); }
+.project-view input, .project-view button { min-width: 0; border: 1px solid var(--hint); border-radius: 6px; padding: 4px 6px; font: inherit; background: white; color: var(--line); }
+.project-view input { user-select: text; }
+.project-view button:not(:disabled) { cursor: pointer; }
+.project-view button:hover:not(:disabled) { background: var(--soft); }
+.project-view input:focus-visible, .project-view button:focus-visible, .project-view summary:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.project-view p { margin: 6px 0; overflow-wrap: anywhere; }
+.project-view h2 { font-size: inherit; margin: 8px 0 3px; }
+.project-view ul { margin: 0; padding-left: 16px; }
+.project-view li { margin: 3px 0; overflow-wrap: anywhere; }
+.project-view li button { margin-left: 4px; padding: 1px 4px; font-size: 10px; }
+.project-task-tree { padding-left: 0 !important; list-style: none; }
+.project-task-tree ul { padding-left: 10px; border-left: 1px solid var(--soft); list-style: none; }
+.project-task-tree summary { font-weight: 500; overflow-wrap: anywhere; }
+.project-task-tree .task-meta { font-size: 11px; color: var(--text); user-select: text; }
+#project-message { color: var(--text); }
+#project-source { white-space: pre-line; color: var(--text); user-select: text; }
+#project-results { max-height: 190px; overflow-y: auto; scrollbar-width: thin; }
+.pm-viewtabs { display: flex; gap: 6px; align-items: center; margin: 6px 0 2px; }
+.pm-viewtabs button { font-size: 11px; line-height: 1.6; padding: 1px 10px; border-radius: 99px; border: 1px solid var(--soft); background: transparent; color: var(--text); cursor: pointer; }
+.pm-viewtabs button.on { background: var(--line); color: #fff; border-color: var(--line); }
+.pm-map { padding-left: 0 !important; list-style: none; }
+.pm-map ul { padding-left: 12px; border-left: 1px solid var(--soft); list-style: none; margin: 0; }
+.pm-map li { margin: 5px 0; }
+.pm-map summary { cursor: pointer; }
+.pm-map summary::marker { color: var(--hint); }
+.pm-node-row { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; overflow-wrap: anywhere; }
+.pm-node-row b { color: var(--line); }
+.pm-chip { font-size: 10.5px; line-height: 1.6; border-radius: 99px; padding: 0 7px; background: color-mix(in srgb, var(--hint) 14%, white); color: var(--text); white-space: nowrap; }
+.pm-chip.role { background: color-mix(in srgb, var(--line) 16%, white); color: var(--line); }
+.pm-chip.ok { background: color-mix(in srgb, #1f8a4c 13%, white); color: #1f8a4c; }
+.pm-chip.st-working { background: color-mix(in srgb, var(--line) 14%, white); color: var(--line); }
+.pm-chip.st-ready { background: #f5e8c8; color: #8a6410; }
+.pm-chip.st-done { background: color-mix(in srgb, #1f8a4c 13%, white); color: #1f8a4c; }
+.pm-chip.st-blocked { background: color-mix(in srgb, #c0392b 12%, white); color: #c0392b; }
+.pm-map .task-meta { font-size: 11px; color: var(--text); user-select: text; margin: 4px 0 0; padding-left: 4px; }
+.pm-map .task-meta p { margin: 2px 0; }
+.pm-map .task-meta p.sub { padding-left: 10px; }
+/* 拉开模式：打开项目进度时折叠上方额度/设置区，画布占满整个气泡 */
+.panel.pm-focus #info, .panel.pm-focus #why, .panel.pm-focus .row, .panel.pm-focus .toggles, .panel.pm-focus .btns { display: none; }
+.panel.pm-focus #project-results { max-height: none; }
+.panel.pm-focus #project-view { margin-top: 0; border-top: 0; padding-top: 0; }
+/* 架构图 v2：面向用户的节点卡片 + 丝滑动画 */
+#project-results { interpolate-size: allow-keywords; }
+.pm-map-wrap { display: flex; flex-direction: column; gap: 8px; }
+.pm-root-card { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; background: var(--line); color: #fff; border-radius: 10px; padding: 8px 12px; font-weight: 700; }
+.pm-root-card b { color: #fff; margin-right: 2px; }
+.pm-root-card .pm-chip { background: #ffffff2e; color: #fff; }
+.pm-progress { flex: 1 0 60px; height: 6px; border-radius: 99px; background: #ffffff3d; overflow: hidden; }
+.pm-progress i { display: block; height: 100%; border-radius: 99px; background: #7ddb9a; transition: width .5s cubic-bezier(.22, 1, .36, 1); }
+.pm-map li { --i: 0; animation: pmIn .32s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(var(--i) * 45ms); }
+@keyframes pmIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.pm-ag { border-radius: 9px; border: 1px solid var(--soft); background: white; padding: 6px 10px; margin: 0; }
+.pm-ag.st-working { border-color: color-mix(in srgb, var(--line) 55%, white); }
+.pm-ag.st-blocked { border-color: color-mix(in srgb, #c0392b 45%, white); }
+.pm-ag.st-done { opacity: .82; }
+.pm-ag summary { list-style: none; display: flex; cursor: pointer; }
+.pm-ag summary::-webkit-details-marker { display: none; }
+.pm-node-row { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; overflow-wrap: anywhere; flex: 1; }
+.pm-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hint); flex: none; margin-right: 2px; }
+.pm-dot.pulse { background: var(--line); animation: pmPulse 1.6s ease-in-out infinite; }
+.pm-dot.alert { background: #c0392b; }
+@keyframes pmPulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--line) 45%, transparent); } 50%, 99% { box-shadow: 0 0 0 5px transparent; } }
+.pm-brief { margin: 5px 0 2px; padding-left: 13px; font-size: 11.5px; color: var(--text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; user-select: text; }
+.pm-brief.alert { color: #c0392b; }
+.pm-ag .task-meta { margin-top: 6px; border-top: 1px dashed var(--soft); padding-top: 5px; }
+/* details 展开丝滑（Chromium 129+ 的 ::details-content，旧内核静默降级） */
+.pm-ag::details-content { block-size: 0; overflow: hidden; transition: block-size .3s cubic-bezier(.22, 1, .36, 1), content-visibility .3s allow-discrete; }
+.pm-ag[open]::details-content { block-size: auto; }
+@media (prefers-reduced-motion: reduce) { .pm-map li { animation: none; } .pm-dot.pulse { animation: none; } .pm-ag::details-content { transition: none; } }
 </style></head>
 <body><div class="panel">
   <div id="info" class="info"></div>
@@ -55,6 +128,17 @@ input[type=checkbox] { accent-color: var(--line); margin: 0; }
   </div>
   <div class="btns"><button data-act="launch" id="launch-btn">打开工具</button>
   <button id="transfer-btn" data-act="transfer">转接到其他工具</button><button data-act="refresh">刷新</button><button data-act="settings">设置</button><button data-act="quit" class="quit">退出</button></div>
+  <details id="project-view" class="project-view" hidden>
+    <summary>项目进度</summary>
+    <form id="project-form">
+      <label for="project-root">项目目录</label>
+      <input id="project-root" type="text" autocomplete="off" spellcheck="false" placeholder="自动识别，或输入项目目录" required>
+      <button id="project-refresh" type="submit">读取</button>
+    </form>
+    <p id="project-source">展开后自动识别当前项目。</p>
+    <p id="project-message" role="status">输入包含 .team 的项目目录。</p>
+    <div id="project-results"></div>
+  </details>
 </div>
 <script src="../shared/usage.js"></script>
 <script src="panel.js"></script></body></html>

@@ -1,0 +1,246 @@
+.bubble #text { width: 54%; justify-content: flex-start; }
+.bubble.notice #text {
+  width: 58%;
+  max-height: none;
+  gap: calc(var(--u) * 8);
+  overflow: clip;
+}
+.bubble.notice .label {
+  max-width: 82%;
+  margin-inline: auto;
+  font-size: calc(var(--u) * 60);
+  line-height: 1.2;
+}
+.bubble.notice .amount {
+  font-size: calc(var(--u) * 53);
+  font-weight: 500;
+  line-height: 1.36;
+  margin-top: 0;
+  text-wrap: balance;
+}
+.bubble.notice .hint {
+  max-width: 79%;
+  margin-inline: auto;
+  font-size: calc(var(--u) * 46);
+  line-height: 1.24;
+}
+.bubble #text > * {
+  width: 100%;
+  min-height: 0;
+  flex-shrink: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.bubble:not(.notice, .compact) #l2.amount:not(.wrap) { white-space: nowrap; }
+.bubble:not(.notice, .compact) #text:has(#l1:not(:empty)):has(#l3:not(:empty)) {
+  gap: calc(var(--u) * 7);
+}
+.bubble:not(.notice, .compact) #text:has(#l1:not(:empty)):has(#l3:not(:empty)) > :is(.label, .hint) {
+  line-height: 1.18;
+  margin-top: 0;
+}
+
+.bubble.handoff .handoff-content {
+  inset: 0;
+  width: 100%;
+  transform: none;
+  pointer-events: none;
+}
+.bubble.handoff .handoff-content.changed { animation: none; }
+.handoff-message {
+  position: absolute;
+  left: 44.25%;
+  top: 35.43%;
+  width: 55%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.root.left .handoff-message { transform: translate(-50%, -50%) scaleX(-1); }
+@media (prefers-reduced-motion: no-preference) {
+  .handoff-content.changed .handoff-message { animation: handoff-in .2s ease-out; }
+}
+.bubble .handoff-target {
+  max-width: 82%;
+  margin-inline: auto;
+  font-size: calc(var(--u) * 38);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.bubble .handoff-heading {
+  max-width: 89%;
+  margin-inline: auto;
+  font-size: calc(var(--u) * 56);
+  line-height: 1.24;
+  letter-spacing: 0.01em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.bubble .handoff-detail {
+  max-width: 94%;
+  font-size: calc(var(--u) * 42);
+  line-height: 1.46;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  opacity: .92;
+}
+.bubble .handoff-bar { height: calc(var(--u) * 9); margin-top: 0; }
+.bubble .handoff-actions {
+  position: absolute;
+  left: calc(var(--u) * 748);
+  top: calc(var(--u) * 45);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--u) * 10);
+}
+.bubble .handoff-actions button {
+  pointer-events: auto;
+  min-width: calc(var(--u) * 166);
+  height: calc(var(--u) * 69);
+  border: calc(var(--u) * 4.5) solid color-mix(in srgb, var(--line) 45%, white);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 3%, white);
+  color: var(--line);
+  box-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 12) color-mix(in srgb, var(--line) 11%, transparent);
+  font-size: calc(var(--u) * 39);
+  line-height: 1.15;
+  padding: 0 calc(var(--u) * 18);
+  white-space: nowrap;
+}
+.bubble .handoff-actions button:first-child {
+  background: color-mix(in srgb, var(--line) 12%, white);
+  color: var(--line);
+  font-size: calc(var(--u) * 36);
+}
+.bubble .handoff-actions button:nth-child(2 of :not([hidden])) { margin-left: calc(var(--u) * 71); }
+.bubble .handoff-actions button:nth-child(3 of :not([hidden])) { margin-left: calc(var(--u) * 99); }
+.bubble .handoff-actions button:hover:not(:disabled) {
+  transform: none;
+  translate: 0 -1px;
+  filter: none;
+  background: color-mix(in srgb, var(--line) 17%, white);
+}
+.root.left .bubble .handoff-actions button { transform: scaleX(-1); }
+
+.bubble #text > *,
+.bubble .handoff-target,
+.bubble .handoff-heading,
+.bubble .handoff-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--bubble-lines, none);
+  overflow: clip;
+}
+
+.bubble:not(.notice, .compact, .handoff) #text:has(> #l1.label:not(:empty)):has(> #l2.amount:not(:empty)) > :is(#l1, #l3) {
+  max-width: calc(var(--u) * 490);
+  margin-inline: auto;
+  white-space: nowrap;
+}
+.bubble:not(.notice, .compact, .handoff) #text > #l1 { font-weight: 600; }
+.bubble #text > :is(.label, .hint), .bubble .handoff-heading { text-wrap: balance; }
+
+/* ---- 交接操作样式变体：classic 即上方基线；orbit 沿上肩弧线，edge 收成右侧薄签 ---- */
+/* ID 前缀压过 pet.css 的 .bubble svg { display:block; width/height:100% }，否则弧线 SVG 会在 classic 下占位挤出按钮 */
+#root svg.handoff-orbit { display: none; }
+
+#root[data-handoff-style="orbit"] .bubble .handoff-actions {
+  width: calc(var(--u) * 194);
+  height: calc(var(--u) * 268);
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-orbit {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-orbit path {
+  display: none;
+  fill: none;
+  stroke: color-mix(in srgb, var(--line) 42%, white);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="2"] .orbit-pair { display: block; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="3"] .orbit-trio { display: block; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions button {
+  position: absolute;
+  translate: -50% -50%;
+  margin-left: 0;
+  min-width: 0;
+  height: auto;
+  padding: calc(var(--u) * 8) calc(var(--u) * 15);
+  font-size: 0;
+  border: calc(var(--u) * 3.5) solid color-mix(in srgb, var(--line) 38%, white);
+  background: color-mix(in srgb, var(--line) 5%, white);
+  box-shadow: 0 calc(var(--u) * 3) calc(var(--u) * 10) color-mix(in srgb, var(--line) 12%, transparent);
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-actions button:first-child {
+  background: var(--line);
+  color: white;
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-actions button::after {
+  content: attr(data-label);
+  display: block;
+  font-size: calc(var(--u) * 30);
+  line-height: 1.15;
+  white-space: pre-line;
+  text-align: center;
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-actions button:hover:not(:disabled) {
+  translate: -50% -50%;
+  filter: none;
+  background: color-mix(in srgb, var(--line) 17%, white);
+}
+#root[data-handoff-style="orbit"] .bubble .handoff-actions button:first-child:hover:not(:disabled) { background: color-mix(in srgb, var(--line) 86%, white); }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="2"] button:nth-child(1 of :not([hidden])) { left: 23%; top: 18%; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="2"] button:nth-child(2 of :not([hidden])) { left: 57%; top: 80%; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="3"] button:nth-child(1 of :not([hidden])) { left: 23%; top: 5%; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="3"] button:nth-child(2 of :not([hidden])) { left: 64%; top: 51.5%; }
+#root[data-handoff-style="orbit"] .bubble .handoff-actions[data-count="3"] button:nth-child(3 of :not([hidden])) { left: 56%; top: 96.5%; }
+
+#root[data-handoff-style="edge"] .bubble .handoff-actions {
+  top: 50%;
+  translate: 0 -50%;
+  width: calc(var(--u) * 168);
+  align-items: stretch;
+  gap: calc(var(--u) * 9);
+}
+#root[data-handoff-style="edge"] .bubble .handoff-actions button {
+  margin-left: 0;
+  min-width: 0;
+  height: auto;
+  padding: calc(var(--u) * 10) calc(var(--u) * 12);
+  font-size: 0;
+  border: calc(var(--u) * 3) solid color-mix(in srgb, var(--line) 30%, white);
+  border-right: 0;
+  border-radius: calc(var(--u) * 18) 0 0 calc(var(--u) * 18);
+  background: color-mix(in srgb, var(--line) 6%, white);
+  box-shadow: none;
+}
+#root[data-handoff-style="edge"] .bubble .handoff-actions button:first-child {
+  background: var(--line);
+  color: white;
+  border-color: var(--line);
+}
+#root[data-handoff-style="edge"] .bubble .handoff-actions button::after {
+  content: attr(data-label);
+  display: block;
+  font-size: calc(var(--u) * 27);
+  line-height: 1.2;
+  white-space: pre-line;
+  text-align: center;
+}
+#root[data-handoff-style="edge"] .bubble .handoff-actions button:hover:not(:disabled) {
+  transform: none;
+  translate: 0 0;
+  filter: none;
+  background: color-mix(in srgb, var(--line) 16%, white);
+}

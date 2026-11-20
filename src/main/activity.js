@@ -36,13 +36,13 @@ function codexActivity(codexDir) {
       }
     }
   } catch (_) { /* */ }
-  best = Math.max(best, statMtime(path.join(codexDir, 'history.jsonl')));
+  // history.jsonl 在桌面版空闲时也会被改写，不能拿它判断「人正在用 Codex」。
   return best;
 }
 
 function claudeActivity(claudeDir) {
   if (!claudeDir) return 0;
-  return Math.max(newestInDir(path.join(claudeDir, 'projects'), { depth: 1, filter: (n) => n.endsWith('.jsonl'), limitDirs: 5 }), statMtime(path.join(claudeDir, 'history.jsonl')));
+  return newestInDir(path.join(claudeDir, 'projects'), { depth: 1, filter: (n) => n.endsWith('.jsonl'), limitDirs: 5 });
 }
 
 function readText(p) { try { return fs.readFileSync(p, 'utf8'); } catch (_) { return ''; } }
@@ -123,6 +123,12 @@ function detect(cfg, providers, agents = []) {
 
 // 窗口标题 → 角色。本地 agent 只认应用主窗口标题；网页类只认浏览器标签页标题以服务名开头的情况
 const BROWSER_RE = /(Google Chrome|Microsoft​? Edge|Mozilla Firefox|Chromium|Opera|Vivaldi|Brave|哔哩哔哩|bilibili)/i;
+const BROWSER_EXE = /^(chrome|msedge|firefox|brave|opera|vivaldi|chromium|360chrome|360se|qqbrowser|quark|sogouexplorer)\.exe$/i;
+// 浏览器窗口标题是「页面名 - Google Chrome」。先剥掉浏览器尾巴，再认页面名，避免「Google Gemini - Google Chrome」对不上 /^Gemini/。
+const BROWSER_TAIL = /(?:\s+and \d+ more pages|\s+和另(?:外|其他)?\s*\d+\s*个(?:标签页|页面|标签))?(?:\s+-\s+(?:Personal|Work|个人|个人资料(?:\s*\d+)?|Profile \d+))?\s+-\s+(?:Google Chrome|Microsoft\u200b? Edge|Mozilla Firefox|Chromium|Opera|Vivaldi|Brave|360极速浏览器|360安全浏览器|QQ浏览器|夸克)\s*$/i;
+function browserPageTitle(title) {
+  return String(title || '').trim().replace(BROWSER_TAIL, '').trim();
+}
 // Claude Code 终端标题：空闲 "✳ Claude Code"，干活时 "◑ <任务摘要>"（开头是转圈符号）
 const SPINNER_RE = /^[✳✶✷✸✹✺✻✼✽◐◑◒◓●○◉◌◍⏺⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]\s/;
 const NATIVE_RULES = [
@@ -130,19 +136,31 @@ const NATIVE_RULES = [
   [/DeepSeek Harness|^DSH Desktop/i, 'deepseek'],
   [/^ZCode(\s*[-–—|]|$)/i, 'zcode'],
   [/Claude Code/i, 'claude'],
+  // pi 在终端里跑，且把自己的标题设成「π - 项目名」（希腊字母 π，不是拉丁 pi）；cmd 兜底是命令行 pi 开头
+  [/^[ππ](\s*[-–—|:]|$)/i, 'pi'],
+  [/^pi(\s|\.|[-–—:）)]|$)/i, 'pi'],
   [/^(Codex|ChatGPT)(\s*[-–—|]|$)/i, 'codex'],
   [/^(?:Google\s+)?Gemini(\s*[-–—|]|$)/i, 'gemini'],
   [/^Kimi\s*(智能助手)?(\s*[-–—|]|$)/, 'kimi'],
 ];
 const WEB_RULES = [
-  [/^Gemini\b/i, 'gemini'], [/^Kimi\b/i, 'kimi'], [/^(Qwen|千问|通义)/i, 'qwen'], [/^Grok\b/i, 'grok'], [/^(豆包|Doubao)/i, 'seed'],
+  [/^(?:Google\s+)?Gemini\b/i, 'gemini'], [/^(?:NotebookLM|NoteLLM)\b/i, 'gemini'],
+  [/^Kimi\b/i, 'kimi'], [/^(Qwen|千问|通义)/i, 'qwen'], [/^Grok\b/i, 'grok'], [/^(豆包|Doubao)/i, 'seed'],
   [/^(DeepSeek)\b/i, 'deepseek'], [/^(ChatGPT|Codex)\b/i, 'codex'], [/^Claude\b/i, 'claude'], [/^(智谱|GLM|Z\.ai|ZCode)\b/i, 'zcode'],
 ];
+function webCharacter(title) {
+  const page = browserPageTitle(title);
+  for (const [re, id] of WEB_RULES) if (re.test(page)) return id;
+  // 对话标题在前、产品名在后：「帮我改设置 - Gemini」，文章标题里顺带提到 Gemini 不算。
+  if (/(?:[-–—|·])\s*(?:Google\s+)?Gemini\s*$/i.test(page)) return 'gemini';
+  if (/(?:[-–—|·])\s*(?:NotebookLM|NoteLLM)\s*$/i.test(page)) return 'gemini';
+  return null;
+}
 const WINDOW_RULES = [...NATIVE_RULES, ...WEB_RULES];
 function characterForTitle(title) {
   if (!title) return null;
   const t = String(title).trim();
-  if (BROWSER_RE.test(t)) { for (const [re, id] of WEB_RULES) if (re.test(t)) return id; return null; }
+  if (BROWSER_RE.test(t)) return webCharacter(t);
   for (const [re, id] of NATIVE_RULES) if (re.test(t)) return id;
   return null;
 }
@@ -163,10 +181,7 @@ function characterForWindow(win, agents = []) {
   const native = { 'chatgpt.exe': 'codex', 'codex.exe': 'codex', 'dsh desktop.exe': 'deepseek', 'zcode.exe': 'zcode', 'claude.exe': 'claude', 'gemini.exe': 'gemini', 'kimi.exe': 'kimi' };
   if (exe === 'grok bot.exe') return 'grok';
   if (native[exe]) return native[exe];
-  if (/^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/.test(exe) || BROWSER_RE.test(win.title || '')) {
-    for (const [re, id] of WEB_RULES) if (re.test(String(win.title || '').trim())) return id;
-    return null;
-  }
+  if (BROWSER_EXE.test(exe) || BROWSER_RE.test(win.title || '')) return webCharacter(win.title);
   const terminal = /^(windowsterminal|openconsole|conhost|mintty|wezterm-gui)\.exe$/.test(exe) || /CASCADIA|ConsoleWindowClass|mintty/i.test(win.cls || '');
   if (terminal && SPINNER_RE.test(String(win.title || '').trim())) return 'claude';
   return characterForTitle(win.title);
@@ -186,7 +201,7 @@ function routeForWindow(win, cfg, providers = [], agents = []) {
   const custom = win && agentForWindow(win, agents); if (custom) return custom;
   const key = characterForWindow(win);
   // 网页的服务名就是角色，不能被本地 CLI 的路由配置覆盖。
-  const browser = /^(chrome|msedge|firefox|brave|opera|vivaldi|chromium)\.exe$/i.test(win && win.processName || '') || BROWSER_RE.test(win && win.title || '');
+  const browser = BROWSER_EXE.test(win && win.processName || '') || BROWSER_RE.test(win && win.title || '');
   if (browser) return key;
   return key === 'claude' ? claudeRoute(cfg) : key === 'codex' ? codexRoute(cfg, providers) : key;
 }
@@ -201,9 +216,18 @@ function claudeRoute(cfg) {
   return 'claude';
 }
 // 前台和用户最近的选择优先，防止后台日志/定时任务抢角色。
+function isBrowserWindow(win) {
+  if (!win) return false;
+  return BROWSER_EXE.test(String(win.processName || '')) || BROWSER_RE.test(win.title || '');
+}
 function selectCharacter({ appearance, foreground = {}, recent = {}, activity = {}, now = Date.now(), charOf = (k) => k }) {
   if (appearance.character && appearance.character !== 'auto') return { character: appearance.character, why: '手动指定' };
   if (foreground.character && now - foreground.at < 3000) return { character: foreground.character, why: `前台是 ${foreground.label || foreground.character}` };
+  // 前台是浏览器但页面名对不上任何工具：不要让 ~/.codex 的后台写入把角色抢走。
+  if (foreground.browsing && !foreground.character) {
+    if (recent.character && now - recent.at < 2 * 60000) return { character: recent.character, why: '这个网页还没认出，先沿用刚才的角色' };
+    return { character: appearance.favorite || 'deepseek', why: '网页认不出，不跟后台日志' };
+  }
   if (recent.character && now - recent.at < 10000) return { character: recent.character, why: `最近${recent.reason === 'launch' ? '打开' : '用过'} ${recent.label || recent.character}` };
   const working = Object.entries(activity.details || {}).filter(([, t]) => now - t >= 0 && now - t < 90000).sort((a, b) => b[1] - a[1]);
   for (const [key] of working) { const character = charOf(key); if (character) return { character, why: `${key} 正在干活` }; }
@@ -211,4 +235,4 @@ function selectCharacter({ appearance, foreground = {}, recent = {}, activity = 
   if (activity.active) { const character = charOf(activity.active); if (character) return { character, why: `最近活跃 ${activity.active}` }; }
   return { character: appearance.favorite || 'deepseek', why: '空闲，回落角色' };
 }
-module.exports = { detect, detectClaudeDirs, wslDistros, characterForTitle, characterForWindow, routeForWindow, codexRoute, claudeRoute, selectCharacter, WINDOW_RULES };
+module.exports = { detect, detectClaudeDirs, wslDistros, characterForTitle, characterForWindow, routeForWindow, codexRoute, claudeRoute, selectCharacter, isBrowserWindow, browserPageTitle, webCharacter, WINDOW_RULES };
