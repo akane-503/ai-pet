@@ -2594,36 +2594,92 @@ test('writeReturnReceipt writes HANDOFF-RETURN + repo RETURNED.md only (no engag
   }
 });
 
-test('external handoff decideAnnounce throttles same engage; inbox only on state change', () => {
+test('external handoff notifies only sponsor moments and dedupes the same engage+kind', () => {
   const {
-    decideAnnounce, rememberAnnounce, dedupeKey, phaseOf, metaFromHandoff,
+    decideAnnounce, rememberAnnounce, dedupeKey, phaseOf, metaFromHandoff, viewFromLatest, notificationFromLatest,
   } = require('../src/main/handoff-external');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-throttle-'));
-  const outFile = path.join(dir, 'HANDOFF-E-TH.md');
-  const outFile2 = path.join(dir, 'HANDOFF-E-TH-b.md');
-  const retFile = path.join(dir, 'HANDOFF-RETURN-E-TH.md');
-  const metaLine = (extra) => `<!-- ai-pet-handoff:${JSON.stringify({ host: 'codex', engageId: 'E-TH', ...extra })} -->`;
-  fs.writeFileSync(outFile, `# HANDOFF — E-TH\n${metaLine({})}\n`, 'utf8');
-  fs.writeFileSync(outFile2, `# HANDOFF — E-TH\n${metaLine({})}\n`, 'utf8');
-  fs.writeFileSync(retFile, `# HANDOFF — return E-TH\n${metaLine({ kind: 'return', returned: true })}\n`, 'utf8');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-sponsor-'));
+  const write = (name, extra, title) => {
+    const file = path.join(dir, name);
+    const meta = { host: 'codex', engageId: 'E-TH', ...extra };
+    fs.writeFileSync(file, `# HANDOFF — ${title || 'E-TH'}\n<!-- ai-pet-handoff:${JSON.stringify(meta)} -->\n`, 'utf8');
+    return file;
+  };
+  const beat = write('HANDOFF-E-TH.md', {}, '进度心跳');
+  const beat2 = write('HANDOFF-E-TH-b.md', { kind: 'progress' }, '仍在写');
+  const gate = write('HANDOFF-E-TH-gate.md', { kind: 'sponsor-gate', module: '转接', gate: 'plan', ask: '选 A 还是 B？' }, '确认计划');
+  const gate2 = write('HANDOFF-E-TH-gate-2.md', { kind: 'sponsor-gate', module: '转接', gate: 'plan' }, '确认计划再写');
+  const ask = write('HANDOFF-E-TH-ask.md', { kind: 'sponsor-gate', module: '转接', gate: 'ask-sponsor', ask: '额度用哪家？' }, '提问');
+  const ready = write('HANDOFF-E-TH-ready.md', { kind: 'deliverable-ready', module: '转接' }, '可验收');
+  const ready2 = write('HANDOFF-E-TH-ready-2.md', { kind: 'deliverable-ready', module: '转接' }, '可验收再写');
+  const ret = write('HANDOFF-RETURN-E-TH.md', { kind: 'returned', module: '转接', returned: true }, 'return E-TH');
+  const retLegacy = write('HANDOFF-RETURN-E-TH-legacy.md', { kind: 'return', returned: true }, 'return E-TH');
   try {
-    assert.equal(phaseOf(metaFromHandoff(outFile), outFile), 'out');
-    assert.equal(phaseOf(metaFromHandoff(retFile), retFile), 'returned');
-    assert.equal(dedupeKey(metaFromHandoff(outFile), outFile), 'engage:E-TH');
+    assert.equal(phaseOf(metaFromHandoff(beat), beat), '');
+    assert.equal(phaseOf(metaFromHandoff(ready), ready), 'deliverable-ready');
+    assert.equal(phaseOf(metaFromHandoff(ret), ret), 'returned');
+    assert.equal(dedupeKey(metaFromHandoff(beat), beat), 'engage:E-TH');
+    assert.equal(dedupeKey(metaFromHandoff(gate), gate), 'engage:E-TH:sponsor-gate');
+    assert.equal(dedupeKey(metaFromHandoff(ready), ready), 'engage:E-TH:deliverable-ready');
     let mem = {};
-    const d1 = decideAnnounce({ file: outFile, at: 1 }, mem);
-    assert.equal(d1.channel, 'inbox');
-    assert.equal(d1.reason, 'dispatched');
-    mem = rememberAnnounce(mem, d1, { file: outFile, at: 1 });
-    const d2 = decideAnnounce({ file: outFile, at: 2 }, mem);
-    assert.equal(d2.channel, 'silent', 'same file refresh must not inbox');
-    const d3 = decideAnnounce({ file: outFile2, at: 3 }, mem);
-    assert.equal(d3.channel, 'bubble', 'same phase rewrite → bubble only');
-    mem = rememberAnnounce(mem, d3, { file: outFile2, at: 3 });
-    const d4 = decideAnnounce({ file: retFile, at: 4 }, mem);
-    assert.equal(d4.channel, 'inbox');
-    assert.equal(d4.reason, 'state-change');
-    assert.equal(d4.phase, 'returned');
+    const skipBeat = decideAnnounce({ file: beat, at: 1 }, mem);
+    assert.equal(skipBeat.channel, 'skip');
+    assert.equal(skipBeat.reason, 'no-kind');
+    mem = rememberAnnounce(mem, skipBeat, { file: beat, at: 1 });
+    const skipProgress = decideAnnounce({ file: beat2, at: 2 }, mem);
+    assert.equal(skipProgress.channel, 'skip', 'progress kind is not a sponsor moment');
+    const dGate = decideAnnounce({ file: gate, at: 3 }, mem);
+    assert.equal(dGate.channel, 'inbox');
+    assert.equal(dGate.reason, 'sponsor-gate');
+    mem = rememberAnnounce(mem, dGate, { file: gate, at: 3 });
+    const dGateAgain = decideAnnounce({ file: gate2, at: 4 }, mem);
+    assert.equal(dGateAgain.channel, 'silent');
+    assert.equal(dGateAgain.reason, 'deduped');
+    const dAsk = decideAnnounce({ file: ask, at: 5 }, mem);
+    assert.equal(dAsk.channel, 'silent', 'same engage + sponsor-gate stays quiet even when the question changes');
+    const dReady = decideAnnounce({ file: ready, at: 6 }, mem);
+    assert.equal(dReady.channel, 'inbox');
+    assert.equal(dReady.reason, 'deliverable-ready');
+    mem = rememberAnnounce(mem, dReady, { file: ready, at: 6 });
+    assert.equal(decideAnnounce({ file: ready2, at: 7 }, mem).channel, 'silent');
+    const dRet = decideAnnounce({ file: ret, at: 8 }, mem);
+    assert.equal(dRet.channel, 'inbox');
+    assert.equal(dRet.phase, 'returned');
+    mem = rememberAnnounce(mem, dRet, { file: ret, at: 8 });
+    assert.equal(decideAnnounce({ file: retLegacy, at: 9 }, mem).channel, 'silent', 'legacy kind return is the same returned moment');
+
+    const gateView = viewFromLatest({ file: gate, at: 3 }, () => '确认计划');
+    assert.equal(gateView.heading, '转接 · 请确认计划');
+    assert.match(gateView.detail, /转接 · 请确认计划/);
+    assert.match(gateView.detail, /选 A 还是 B？/);
+    assert.equal(gateView.target, '转接');
+    assert.equal(gateView.canMarkReturned, true);
+    const gateNote = notificationFromLatest({ file: gate, at: 3 }, () => '确认计划');
+    assert.equal(gateNote.title, '要你处理');
+    assert.match(gateNote.body, /转接/);
+    assert.match(gateNote.body, /请确认计划/);
+    assert.match(gateNote.body, /选 A 还是 B？/);
+
+    const askView = viewFromLatest({ file: ask, at: 5 }, () => '提问');
+    assert.equal(askView.heading, '转接 · 请回答 ask-sponsor');
+    assert.match(askView.detail, /额度用哪家？/);
+
+    const readyView = viewFromLatest({ file: ready, at: 6 }, () => '可验收');
+    assert.equal(readyView.heading, '转接 · 请验收这份交付物');
+    assert.match(readyView.detail, /转接 · 请验收这份交付物/);
+    assert.equal(notificationFromLatest({ file: ready, at: 6 }, () => '可验收').title, '交付物可验收');
+
+    const retView = viewFromLatest({ file: ret, at: 8 }, () => 'return E-TH');
+    assert.equal(retView.heading, '外包已交回');
+    assert.equal(retView.detail, '转接 · E-TH 已交回');
+    assert.equal(retView.canMarkReturned, false);
+    assert.equal(notificationFromLatest({ file: ret, at: 8 }, () => 'return E-TH').body, '转接 · E-TH 已交回');
+
+    const plain = viewFromLatest({ file: gate, at: 3 }, () => '确认计划');
+    const unspecified = write('HANDOFF-E-TH-open.md', { kind: 'sponsor-gate', module: '面板' }, '待定');
+    const openView = viewFromLatest({ file: unspecified, at: 10 }, () => '待定');
+    assert.equal(openView.heading, '面板 · 请确认计划，或回答 ask-sponsor');
+    assert.equal(plain.sponsorKind, 'sponsor-gate');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

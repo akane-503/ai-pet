@@ -1146,7 +1146,7 @@ function handoffAction({ action, id } = {}) {
   if (action === 'close') { job.closed = true; sendPet('cmd', { name: 'hide' }); }
 }
 
-/** 外部写入 ~/.handoff/latest.txt（如 project-team engage --live）：按 engage 去重，仅状态变化进收件箱 */
+/** 外部写入 ~/.handoff/latest.txt：只在 sponsor-gate / deliverable-ready / returned 通知，同 engage+kind 只响一次 */
 function announceExternalHandoff(latest) {
   const decision = handoffExternal.decideAnnounce(latest, externalHandoffMemory);
   externalHandoffMemory = handoffExternal.rememberAnnounce(externalHandoffMemory, decision, latest);

@@ -6,6 +6,13 @@
  * Boundary: announce + copy takeover + write return receipt (HANDOFF-RETURN / RETURNED.md).
  * Do NOT write engagements.json / board / ticket state — pm consumes the receipt.
  * Progress truth stays in project-team-pm (`team status --json`).
+ *
+ * Announce only sponsor moments, from the ai-pet-handoff marker kind:
+ *   sponsor-gate — confirm a plan, or answer ask-sponsor
+ *   deliverable-ready — a module deliverable can be accepted
+ *   returned — the outsource slice came back (legacy kind "return" counts)
+ * Heartbeats with no kind, and any other kind, stay quiet.
+ * The same engage + kind is announced once.
  */
 const fs = require('fs');
 const path = require('path');
@@ -48,7 +55,7 @@ function repoRootFromBrief(briefPath) {
  * Falls back to blockquote `host=` then 'cursor' for legacy files.
  */
 function metaFromHandoff(file) {
-  const empty = { host: '', engageId: '', briefPath: '', takeover: '', kind: '', returned: false };
+  const empty = { host: '', engageId: '', briefPath: '', takeover: '', kind: '', returned: false, module: '', gate: '', ask: '' };
   if (!file) return empty;
   try {
     const fd = fs.openSync(file, 'r');
@@ -66,6 +73,9 @@ function metaFromHandoff(file) {
           takeover: String(j.takeover || '').trim(),
           kind: String(j.kind || '').trim(),
           returned: !!j.returned,
+          module: String(j.module || j.moduleName || '').trim(),
+          gate: String(j.gate || '').trim(),
+          ask: String(j.ask || j.action || '').trim(),
         };
       }
       const hq = />.*\bhost=([^\s·]+)/i.exec(head);
@@ -154,16 +164,63 @@ function writeReturnReceipt({ engageId, repoRoot = '', host = '' } = {}) {
   };
 }
 
+/** sponsor-gate | deliverable-ready | returned, or '' when this file is not a sponsor moment. */
+function sponsorKind(meta, file) {
+  const kind = String(meta && meta.kind || '').trim();
+  if (kind === 'returned' || kind === 'return' || (meta && meta.returned)) return 'returned';
+  if (kind === 'sponsor-gate' || kind === 'deliverable-ready') return kind;
+  if (!kind && /RETURN/i.test(path.basename(file || ''))) return 'returned';
+  return '';
+}
+
+function moduleName(meta, goal) {
+  const explicit = String((meta && meta.module) || '').trim();
+  if (explicit) return explicit;
+  const text = String(goal || '').replace(/\s*→\s*[A-Za-z][\w.-]*\s*$/u, '').replace(/^return\s+/i, '').trim();
+  const id = meta && String(meta.engageId || '').trim();
+  if (text && text !== id) return text;
+  return id || '未命名模块';
+}
+
+function sponsorAction(meta, kind) {
+  if (kind === 'deliverable-ready') return '请验收这份交付物';
+  if (kind === 'returned') return '外包已交回';
+  const gate = String(meta && meta.gate || '').trim().toLowerCase();
+  if (gate === 'plan' || gate === 'confirm-plan') return '请确认计划';
+  if (gate === 'ask-sponsor' || gate === 'ask') return '请回答 ask-sponsor';
+  return '请确认计划，或回答 ask-sponsor';
+}
+
+/** Bubble / toast copy: module name plus what the sponsor should do. */
+function sponsorPresentation(meta, goal, kind) {
+  const name = moduleName(meta, goal);
+  const ask = String(meta && meta.ask || '').trim();
+  if (kind === 'returned') {
+    const id = meta && String(meta.engageId || '').trim();
+    const detail = id && name !== id ? `${name} · ${id} 已交回` : (id ? `${id} 已交回` : `${name} 已交回`);
+    return { module: name, title: '外包已交回', heading: '外包已交回', detail, target: '已交回', action: '外包已交回' };
+  }
+  const action = sponsorAction(meta, kind);
+  const line = `${name} · ${action}`;
+  const detail = ask ? `${line}\n${ask}` : line;
+  if (kind === 'deliverable-ready') {
+    return { module: name, title: '交付物可验收', heading: line, detail, target: name, action };
+  }
+  return { module: name, title: '要你处理', heading: line, detail, target: name, action };
+}
+
 function viewFromLatest(latest, goalOf, opts = {}) {
   const goal = (typeof goalOf === 'function' ? goalOf(latest.file) : '') || path.basename(latest.file, '.md');
   const meta = metaFromHandoff(latest.file);
-  const isReturn = meta.returned || meta.kind === 'return' || /RETURN/i.test(path.basename(latest.file || ''));
+  const kind = sponsorKind(meta, latest.file);
+  const isReturn = kind === 'returned';
+  const presented = kind ? sponsorPresentation(meta, goal, kind) : null;
   const repoRoot = opts.repoRoot || repoRootFromBrief(meta.briefPath) || '';
   return {
     id: `ext-${latest.at}`,
-    target: isReturn ? '已交回' : '外部交接',
-    heading: isReturn ? '外包已交回' : '收到交接文件',
-    detail: meta.host ? `${goal} · ${meta.host}` : goal,
+    target: presented ? presented.target : '外部交接',
+    heading: presented ? presented.heading : '收到交接文件',
+    detail: presented ? presented.detail : (meta.host ? `${goal} · ${meta.host}` : goal),
     project: '',
     step: 4,
     steps: ['ok', 'ok', 'ok', 'ok'],
@@ -181,49 +238,63 @@ function viewFromLatest(latest, goalOf, opts = {}) {
     returned: isReturn,
     canMarkReturned: !isReturn && !!meta.engageId,
     repoRoot,
+    sponsorKind: kind,
+    module: presented ? presented.module : '',
   };
 }
 
 function notificationFromLatest(latest, goalOf) {
   const goal = (typeof goalOf === 'function' ? goalOf(latest.file) : '') || path.basename(latest.file, '.md');
   const meta = metaFromHandoff(latest.file);
-  const isReturn = meta.returned || meta.kind === 'return' || /RETURN/i.test(path.basename(latest.file || ''));
+  const kind = sponsorKind(meta, latest.file);
+  if (!kind) {
+    return {
+      title: '收到 AI 交接',
+      body: meta.host ? `${goal} → ${meta.host}` : goal,
+      file: latest.file,
+      host: meta.host,
+    };
+  }
+  const presented = sponsorPresentation(meta, goal, kind);
+  const ask = String(meta.ask || '').trim();
+  const body = ask && kind !== 'returned' ? `${presented.module} · ${presented.action}：${ask}` : presented.detail.split('\n')[0];
   return {
-    title: isReturn ? '外包已交回' : '收到 AI 交接',
-    body: meta.host ? `${goal} → ${meta.host}` : goal,
+    title: presented.title,
+    body,
     file: latest.file,
     host: meta.host,
+    module: presented.module,
+    sponsorKind: kind,
   };
 }
 
-function isReturnMeta(meta, file) {
-  return !!(meta && (meta.returned || meta.kind === 'return')) || /RETURN/i.test(path.basename(file || ''));
-}
-
-/** Lifecycle phase for throttle: out (派出/需你处理) vs returned (交回). */
+/** Sponsor moment for this file, or '' when it should stay quiet. */
 function phaseOf(meta, file) {
-  return isReturnMeta(meta, file) ? 'returned' : 'out';
+  return sponsorKind(meta, file);
 }
 
-/** Stable key for same engage / same HANDOFF — used to merge inbox rows. */
-function dedupeKey(meta, file) {
+/** Stable key: same engage + kind (no kind → engage/file only, and those are not announced). */
+function dedupeKey(meta, file, kind) {
   const id = meta && String(meta.engageId || '').trim();
-  if (id) return `engage:${id}`;
-  if (file) {
+  let base = '';
+  if (id) base = `engage:${id}`;
+  else if (file) {
     try {
-      return `file:${path.resolve(String(file)).toLowerCase()}`;
+      base = `file:${path.resolve(String(file)).toLowerCase()}`;
     } catch (_) {
-      return `file:${String(file).toLowerCase()}`;
+      base = `file:${String(file).toLowerCase()}`;
     }
   }
-  return '';
+  if (!base) return '';
+  const k = kind != null && String(kind) !== '' ? String(kind) : sponsorKind(meta, file);
+  return k ? `${base}:${k}` : base;
 }
 
 /**
  * Decide how loud to announce a latest.txt bump.
- * inbox = toast + 收件箱（派出 / 交回 / 状态变化）
- * bubble = 只刷新桌宠气泡（同 phase 换文件）
- * silent = 仅记 memory / lastJob（同文件刷屏）
+ * inbox = toast + 收件箱 + 气泡，仅 sponsor-gate / deliverable-ready / returned 的第一次
+ * silent = 同 engage+kind 已通知过
+ * skip = 无 kind 的进度心跳，以及其它 kind
  *
  * @param {{ file?: string, at?: number } | null} latest
  * @param {Record<string, { phase: string, file: string, at?: number }>} memory
@@ -231,28 +302,12 @@ function dedupeKey(meta, file) {
 function decideAnnounce(latest, memory = {}) {
   if (!latest || !latest.file) return { channel: 'skip', phase: '', key: '', reason: 'no-file' };
   const meta = metaFromHandoff(latest.file);
-  const key = dedupeKey(meta, latest.file);
-  const phase = phaseOf(meta, latest.file);
+  const phase = sponsorKind(meta, latest.file);
+  const key = dedupeKey(meta, latest.file, phase);
+  if (!phase) return { channel: 'skip', phase: '', key, reason: 'no-kind' };
   const prev = key ? memory[key] : null;
-  if (!prev) {
-    return {
-      channel: 'inbox',
-      phase,
-      key,
-      reason: phase === 'returned' ? 'returned' : 'dispatched',
-    };
-  }
-  if (prev.phase !== phase) {
-    return { channel: 'inbox', phase, key, reason: 'state-change' };
-  }
-  let sameFile = false;
-  try {
-    sameFile = path.resolve(String(prev.file || '')) === path.resolve(String(latest.file));
-  } catch (_) {
-    sameFile = String(prev.file || '') === String(latest.file);
-  }
-  if (sameFile) return { channel: 'silent', phase, key, reason: 'same-file-refresh' };
-  return { channel: 'bubble', phase, key, reason: 'same-phase-rewrite' };
+  if (prev) return { channel: 'silent', phase, key, reason: 'deduped' };
+  return { channel: 'inbox', phase, key, reason: phase };
 }
 
 function rememberAnnounce(memory, decision, latest) {
@@ -355,6 +410,7 @@ module.exports = {
   writeReturnReceipt,
   repoRootFromBrief,
   phaseOf,
+  sponsorKind,
   dedupeKey,
   decideAnnounce,
   rememberAnnounce,
