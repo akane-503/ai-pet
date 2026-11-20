@@ -1,10 +1,24 @@
 'use strict';
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
 const exec = promisify(execFile);
+
+function canonical(p) {
+  try { return fsSync.realpathSync.native(p); }
+  catch { return path.resolve(p); }
+}
+function samePath(a, b) {
+  return !!a && !!b && canonical(a) === canonical(b);
+}
+function insidePath(parent, child) {
+  if (!parent || !child) return false;
+  const relative = path.relative(canonical(parent), canonical(child));
+  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+}
 
 function cliPath() {
   const configured = process.env.TEAM_PM_CLI;
@@ -36,8 +50,7 @@ async function projectLocation(directory) {
   } catch { /* An unversioned PM workspace can still expose project status. */ }
   let current = '';
   for (const tree of worktrees) {
-    const relative = path.relative(tree.path, selected);
-    tree.current = relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+    tree.current = insidePath(tree.path, selected);
     if (tree.current) current = tree.path;
   }
   let root = worktrees.length && current ? worktrees[0].path : selected;
@@ -57,7 +70,7 @@ function taskAssignment(task, worktrees) {
   const assignment = task.assignment;
   const worktree = task.dispatch?.worktree || assignment?.worktree || '';
   const branch = task.dispatch?.branch || assignment?.branch || '';
-  const registered = worktrees.find((tree) => worktree && path.relative(tree.path, worktree) === '');
+  const registered = worktrees.find((tree) => samePath(tree.path, worktree));
   if (!assignment && !task.dispatched && !task.sessionId && !task.sessionName) return null;
   return {
     workerId: assignment?.workerId || '',
@@ -87,8 +100,7 @@ async function describeWorktrees(location, tickets) {
     tree.head = head;
     tree.dirty = Math.max(status, 0);
     tree.dirtyUnknown = status < 0;
-    const task = tickets.find((ticket) => ticket.assignment?.worktree
-      && path.relative(ticket.assignment.worktree, tree.path) === '');
+    const task = tickets.find((ticket) => samePath(ticket.assignment?.worktree, tree.path));
     tree.task = task ? { id: task.id, title: task.title, status: task.status } : null;
   }));
   return location.worktrees;
@@ -163,7 +175,7 @@ async function readProjectStatus(directory) {
   try {
     status = await read(['status', '--json']);
     if (status.schemaVersion !== 1 || typeof status.repo?.root !== 'string'
-      || await fs.realpath(status.repo.root) !== root
+      || !samePath(status.repo.root, root)
       || !Array.isArray(status.personQueue) || !Array.isArray(status.engagements)) throw new Error();
     list = await read(['ticket', 'list']);
     if (!Array.isArray(list.tickets)) throw new Error();
