@@ -13,11 +13,220 @@ const { dueCharacters } = require('../src/main/quips');
 const activity = require('../src/main/activity');
 const { isRelay, relayMetric } = require('../src/shared/usage');
 
+test('project panel reads a selected workspace through the trusted CLI', async (t) => {
+  const { readProjectStatus } = require('../src/main/project-status');
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-project-'));
+  const root = path.join(folder, 'sample project');
+  const cli = path.join(folder, 'team.cjs');
+  const previous = process.env.TEAM_PM_CLI;
+  t.after(() => {
+    if (previous === undefined) delete process.env.TEAM_PM_CLI;
+    else process.env.TEAM_PM_CLI = previous;
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+  fs.mkdirSync(path.join(root, '.team'), { recursive: true });
+  fs.writeFileSync(cli, `
+    const [command, flag] = process.argv.slice(2);
+    if (command === 'status' && flag === '--json') {
+      console.log(JSON.stringify({ schemaVersion: 1,
+        repo: { name: 'sample project', root: process.cwd() },
+        org: [{ id: 'pm', title: 'PM', role: 'L1_pm', parentId: null }],
+        personQueue: [{ id: 'T-1', kind: 'ask-sponsor', summary: 'Confirm' }],
+        engagements: [
+          { id: 'E-1', title: 'Active', host: 'codex', state: 'in_progress' },
+          { id: 'E-2', title: 'Closed', state: 'accepted' },
+        ],
+      }));
+    } else if (command === 'ticket' && flag === 'list') {
+      console.log(JSON.stringify({ tickets: [{ id: 'T-1', title: 'Task', status: 'assigned', nodeId: 'pm',
+        assignment: { workerId: 'worker-1', sessionLabel: 'Implement', token: 'private-token' }, private: 'omitted' }] }));
+    } else process.exit(2);
+  `);
+  process.env.TEAM_PM_CLI = cli;
+  const status = await readProjectStatus(root);
+  assert.equal(status.name, 'sample project');
+  assert.equal(status.tickets[0].assignment.workerId, 'worker-1');
+  assert.equal(status.tickets[0].assignment.sessionLabel, 'Implement');
+  assert.equal(status.tickets[0].nodeId, 'pm');
+  assert.equal(status.org[0].role, 'L1_pm');
+  assert.ok(!JSON.stringify(status).includes('private-token'));
+  assert.ok(!JSON.stringify(status).includes('omitted'));
+  assert.equal(status.attention[0].summary, 'Confirm');
+  assert.deepEqual(status.engagements.map(({ id }) => id), ['E-1']);
+  await assert.rejects(readProjectStatus('relative'), /完整目录路径/);
+  await assert.rejects(readProjectStatus(folder), /没有可读取的 .team/);
+  fs.writeFileSync(cli, `console.log(JSON.stringify({ schemaVersion: 1, repo: { root: process.cwd() + '/.team' } }));`);
+  await assert.rejects(readProjectStatus(root), /无法读取项目状态/);
+});
+
+test('project panel resolves worktrees to their PM control checkout and identifies legacy state', async (t) => {
+  const { execFileSync } = require('node:child_process');
+  const { readProjectStatus } = require('../src/main/project-status');
+  try { execFileSync('git', ['--version'], { stdio: 'ignore', windowsHide: true }); }
+  catch { t.skip('Git is unavailable'); return; }
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-worktrees-'));
+  const root = path.join(folder, 'control');
+  const tree = path.join(folder, 'task branch');
+  const cli = path.join(folder, 'team.cjs');
+  const previous = process.env.TEAM_PM_CLI;
+  t.after(() => {
+    if (previous === undefined) delete process.env.TEAM_PM_CLI;
+    else process.env.TEAM_PM_CLI = previous;
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+  function git(...args) {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: 'pipe', windowsHide: true });
+  }
+  git('init', '-q', root);
+  git('-C', root, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'fixture');
+  git('-C', root, 'worktree', 'add', '-q', '-b', 'feature', tree);
+  fs.mkdirSync(path.join(root, '.team'));
+  fs.writeFileSync(cli, `
+    console.log(JSON.stringify(process.argv[2] === 'status'
+      ? { schemaVersion: 1, repo: { name: 'control', root: process.cwd() }, personQueue: [], engagements: [] }
+      : { tickets: [{ id: 'T-1', title: 'Task', status: 'done' }] }));
+  `);
+  process.env.TEAM_PM_CLI = cli;
+  const status = await readProjectStatus(tree);
+  assert.equal(status.root, fs.realpathSync(root));
+  assert.equal(status.currentRoot.replace(/\\/g, '/'), tree.replace(/\\/g, '/'));
+  assert.equal(status.worktrees.length, 2);
+  assert.equal(status.worktrees.find((item) => item.current).branch, 'feature');
+  assert.equal(status.tickets[0].status, 'done');
+
+  fs.mkdirSync(path.join(root, '.team', 'local'));
+  fs.writeFileSync(path.join(root, '.team', 'local', 'board.json'), JSON.stringify({ tasks: { 'T-1': {
+    title: 'Legacy Task', module: 'renderer', status: '进行中', dispatched: true,
+    sessionName: 'Legacy session', sessionId: '/root/legacy',
+    dispatch: { worktree: tree, branch: 'feature' },
+    claim: { owner: 'private-owner', expiresAt: Date.now() + 60000 },
+    evidence: [{ head: '12345678', exit: 0, at: '2026-11-07T00:00:00Z' }],
+    tokenHash: 'private-hash', token: 'private-token',
+  } } }));
+  fs.writeFileSync(cli, 'throw new Error("Legacy data must not be read by the modern CLI")');
+  fs.writeFileSync(path.join(tree, 'leftover.txt'), 'uncommitted');
+  const legacy = await readProjectStatus(tree);
+  assert.equal(legacy.compatibility, 'legacy');
+  assert.equal(legacy.worktrees.length, 2);
+  assert.equal(legacy.tickets[0].id, 'T-1');
+  assert.equal(legacy.tickets[0].status, 'working');
+  assert.equal(legacy.tickets[0].assignment.sessionLabel, 'Legacy session');
+  assert.equal(legacy.tickets[0].assignment.sessionId, '/root/legacy');
+  assert.equal(legacy.tickets[0].assignment.worktreeRegistered, true);
+  assert.equal(legacy.tickets[0].assignment.workerId, '');
+  assert.equal(legacy.tickets[0].lease.active, true);
+  assert.equal(legacy.tickets[0].evidence.exit, 0);
+  assert.ok(!JSON.stringify(legacy).includes('private-'));
+  // 工作树可视化数据：HEAD、未提交改动数、任务挂载
+  assert.ok(legacy.worktrees.every((item) => /^[0-9a-f]{7,12}$/.test(item.head) && typeof item.dirty === 'number' && !item.dirtyUnknown));
+  const mounted = legacy.worktrees.find((item) => item.task);
+  assert.ok(mounted.dirty >= 1);
+  assert.equal(mounted.task.id, 'T-1');
+  assert.equal(mounted.task.title, 'Legacy Task');
+  assert.equal(mounted.task.status, 'working');
+  assert.ok(legacy.worktrees.filter((item) => !item.task).every((item) => item.task === null));
+});
+
+test('project panel follows the current workspace while preserving a manual edit during detection', async () => {
+  const nodes = new Map();
+  function element() {
+    return { value: '', disabled: false, open: false, textContent: '', scrollHeight: 300, children: [], listeners: {},
+      addEventListener(name, callback) { this.listeners[name] = callback; },
+      append(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; },
+      setAttribute() {},
+    };
+  }
+  const query = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, element());
+    return nodes.get(selector);
+  };
+  let detected;
+  const pending = new Promise((resolve) => { detected = resolve; });
+  let probe = () => pending;
+  const reads = [];
+  const sends = [];
+  const ctx = vm.createContext({
+    document: { querySelector: query, createElement: element, addEventListener() {} },
+    localStorage: { getItem: () => '', setItem() {} },
+    requestAnimationFrame: (callback) => callback(),
+    window: {
+      pet: { invoke: () => probe(), on() {}, send: (ch, p) => sends.push({ ch, p }) }, addEventListener() {},
+      projectPanel: { read: async (root) => {
+        reads.push(root);
+        return { name: 'Fixture', org: [{ id: 'pm', title: 'Project manager', role: 'L1_pm', parentId: null }],
+          tickets: [
+            { id: 'T-1', title: 'Finished Task', status: 'done', nodeId: 'pm', assignment: null },
+            { id: 'T-2', title: 'Assigned Task', status: 'assigned', nodeId: 'pm',
+              assignment: { workerId: 'worker-1', sessionLabel: 'Build UI', worktree: 'fixture-tree', worktreeRegistered: true } },
+          ], attention: [], engagements: [] };
+      } },
+    },
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer/panel.js'), 'utf8'), ctx);
+  const view = query('#project-view'), input = query('#project-root');
+  view.open = true;
+  view.listeners.toggle();
+  input.value = 'manual-project';
+  input.listeners.input();
+  detected({ project: 'old-current-project' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(input.value, 'manual-project');
+  assert.deepEqual(reads, []);
+
+  probe = async () => ({ project: 'current-project' });
+  view.open = true;
+  view.listeners.toggle();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(input.value, 'current-project');
+  assert.deepEqual(reads, ['current-project']);
+  // 打开项目管理 = 拉开模式：向主进程报扩宽后的面板尺寸
+  assert.ok(sends.some((s) => s.ch === 'panel:size' && s.p.w === 560), '拉开模式应报 560 宽');
+  assert.match(query('#project-source').textContent, /自动识别当前项目\ncurrent-project/);
+  const text = (node) => node.textContent + '\n' + node.children.map(text).join('\n');
+  assert.match(query('#project-message').textContent, /未检测到 Git 工作树/);
+  assert.match(text(query('#project-results')), /PM 任务树/);
+  assert.match(text(query('#project-results')), /Finished Task · 已完成/);
+  assert.match(text(query('#project-results')), /Agent · 未分派/);
+  assert.match(text(query('#project-results')), /会话 · 未分派/);
+  assert.match(text(query('#project-results')), /Assigned Task · 已分派/);
+  assert.match(text(query('#project-results')), /Agent · worker-1/);
+  assert.match(text(query('#project-results')), /会话 · Build UI/);
+  assert.match(text(query('#project-results')), /工作树 · fixture-tree（Git 已登记）/);
+
+  // 视图切换：切到「架构图」渲染组织思维导图，任务挂到对应节点
+  assert.match(text(query('#project-results')), /架构图/);
+  const find = (node, id) => node.id === id ? node : (node.children || []).map((c) => find(c, id)).find(Boolean);
+  const mapTab = find(query('#project-results'), 'project-mode-map');
+  assert.ok(mapTab, '架构图切换按钮存在');
+  mapTab.listeners.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(text(query('#project-results')), /Project manager/);
+  assert.match(text(query('#project-results')), /T-1 · Finished Task · 已完成/);
+  assert.match(text(query('#project-results')), /Assigned Task/);
+  assert.doesNotMatch(text(query('#project-results')), /PM 任务树/);
+
+  input.value = 'chosen-project';
+  probe = async () => ({ project: '' });
+  view.listeners.toggle();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(input.value, 'chosen-project');
+  assert.equal(reads.at(-1), 'chosen-project');
+  assert.match(query('#project-source').textContent, /未识别到当前项目，保留原目录\nchosen-project/);
+
+  probe = async () => { throw new Error('IPC unavailable'); };
+  view.listeners.toggle();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(input.value, 'chosen-project');
+  assert.match(query('#project-source').textContent, /自动识别暂不可用，保留原目录\nchosen-project/);
+});
+
 test('handoff desktop launch failure stays a failure and never requests automatic paste', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
   const sent = [], copied = [], calls = [];
   const ctx = vm.createContext({ QUOTA_ONLY: false,
     path, setTimeout, Date, console, AbortController, state: {data: {}, saveSoon:()=>{}}, handoffEstimate: require('../src/main/handoff-estimate'), handoffReturn: require('../src/main/handoff-return'), handoffJob: null, lastAgentWin: null, lastHandoffJob: null, handoffSerial:0, updateTrayMenu: () => {}, desktopDraft:{isDsh:()=>false}, quipsKey: () => null, handoffApi: { KINDS: {} }, charOf: (k) => k,
+    MODEL_ID_RE: /^[\w][\w.\/:@+-]{0,120}$/,
     launcher: { supportsWorkspace: s => s.kind === 'app', launch: async (...args) => { calls.push(args); return { ok:false, message:'fixture launch failed' }; } },
     launchCfg: () => ({}), recent: {}, pushData: () => {}, log: () => {},
     sendPet: (_ch, p) => sent.push(p), clipboard: { writeText: s => copied.push(s) },
@@ -110,7 +319,7 @@ test('pet right-click exposes copy, cancel and hide without squeezing controls i
   assert.equal(menu.some(x=>x.label?.includes('已交回')),false);
   ctx.lastHandoffJob=ctx.handoffJob;ctx.handoffJob=null;
   const completed=vm.runInContext('petMenuTemplate()',ctx);
-  assert.ok(completed.some(x=>x.label?.includes('复制交接指令')));assert.equal(completed.some(x=>x.label?.includes('取消交接')),false);
+  assert.equal(completed.some(x=>x.label?.includes('复制交接指令')),false);assert.equal(completed.some(x=>x.label?.includes('取消交接')),false);
   ctx.lastHandoffJob={id:11,text:'engage',canMarkReturned:true,engageId:'E-1'};
   const retMenu=vm.runInContext('petMenuTemplate()',ctx);
   assert.ok(retMenu.some(x=>x.label?.includes('已交回')));
@@ -206,6 +415,51 @@ test('B edition hides handoff and tool launch menus, and blocks handoff executio
   assert.match(labels, /刷新额度|设置/);
   vm.runInContext(source.slice(source.indexOf('async function runHandoff('), source.indexOf('function launchCurrent(')), ctx);
   await vm.runInContext('runHandoff()', ctx); // 没有任何交接依赖也应直接返回。
+});
+
+test('project progress panel and module progress menu stay side by side', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
+  const ctx = vm.createContext({
+    QUOTA_ONLY: false,
+    config: { data: { appearance: { character: 'auto', scale: 1, sound: 'off', peakMode: 'default', bubbleOn: true, quipsOn: true, alwaysOnTop: true, snapScreen: true, snapWindows: false }, autostart: false } },
+    state: { data: { notifications: [] } },
+    allCharacters: () => [],
+    setAppearance: () => {},
+    launcher: { resolve: () => ({ label: 'Codex' }) },
+    currentCharacter: null,
+    resolveCharacter: () => 'codex',
+    launchCfg: () => ({}),
+    launchCurrent: () => {},
+    launchTargets: () => [],
+    openHandoffPicker: () => {},
+    refreshAll: () => {},
+    sendPet: () => {},
+    openSettings: () => {},
+    winsnap: { available: () => false },
+    setAutostart: () => {},
+    petWin: { isVisible: () => true },
+    setPetVisible: () => {},
+    openProjectPanel: () => {},
+    openModuleTree: () => {},
+    app: { quit: () => {} },
+    handoffJob: null,
+    lastHandoffJob: null,
+    handoffAction: () => {},
+  });
+  vm.runInContext(source.slice(source.indexOf('function buildMenuTemplate('), source.indexOf('function updateTrayMenu(')), ctx);
+  for (const menu of ['buildMenuTemplate()', 'petMenuTemplate()']) {
+    const labels = vm.runInContext(`${menu}.map(m => m.label || "")`, ctx);
+    assert.ok(labels.includes('项目进度…'), menu);
+    assert.ok(labels.includes('模块进度…'), menu);
+    assert.ok(labels.indexOf('项目进度…') < labels.indexOf('模块进度…'), menu);
+  }
+  const panel = fs.readFileSync(path.join(__dirname, '../src/renderer/panel.html'), 'utf8');
+  const panelJs = fs.readFileSync(path.join(__dirname, '../src/renderer/panel.js'), 'utf8');
+  assert.match(panel, /<summary>项目进度<\/summary>/);
+  assert.match(panelJs, /project-mode-map/);
+  assert.match(panelJs, /架构图/);
+  assert.equal(typeof require('../src/main/module-tree').buildModuleTree, 'function');
+  assert.equal(typeof require('../src/main/handoff-external').sponsorKind, 'function');
 });
 
 test('B onboarding only enables actual quota results and uses account credentials for relays', () => {
@@ -1700,8 +1954,11 @@ test('pet right-click drops the redundant launch item: double-click already open
   const menu = vm.runInContext('petMenuTemplate()', ctx);
   assert.equal(menu.some((m) => m.label === 'ordinary 0'), false, '「打开当前工具」不该出现在右键菜单里');
   assert.ok(menu.some((m) => m.label === 'ordinary 1'), '打开其他…要留着');
-  assert.ok(menu.some((m) => m.label === 'ordinary 2'), '交接入口要留着');
+  assert.equal(menu.some((m) => m.label === 'ordinary 2'), false, '没有正在用的工具时，不把转接一直挂在右键里');
   assert.ok(menu.some((m) => m.label === '⚙️ 设置…'), '右键要能直接进设置');
+  ctx.currentHandoffSource = () => ({ title: 'live' });
+  const withSource = vm.runInContext('petMenuTemplate()', ctx);
+  assert.ok(withSource.some((m) => m.label === 'ordinary 2'), '认得出前台工具时才挂转接');
 });
 test('sessions started by a takeover prompt are named by its task label, not the whole command', () => {
   const { sessionName } = require('../src/main/handoff-api');
@@ -2190,6 +2447,47 @@ test('custom model state changes do not reuse cached results from a different fi
   } finally {model.resetCache();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+test('pi preset follows its current model from settings.json', () => {
+  const activity = require('../src/main/activity');
+  assert.equal(activity.characterForTitle('pi --model claude-opus-5-5'), 'pi');
+  assert.equal(activity.characterForTitle('pi'), 'pi');
+  assert.equal(activity.characterForTitle('pip install something'), null);
+  assert.equal(activity.characterForTitle('π - ai-pet'), 'pi');
+  assert.equal(activity.characterForTitle('π - 电控培训'), 'pi');
+  const model=require('../src/main/agent-model'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-pi-'));
+  try {
+    const settings=path.join(dir,'settings.json');
+    fs.writeFileSync(settings,JSON.stringify({lastChangelogVersion:'1.5.0',defaultProvider:'ekti',defaultModel:'claude-opus-5-5'}));
+    assert.equal(model.info('pi',{modelFile:settings,modelPath:'defaultModel'}).character,'claude');
+    fs.writeFileSync(settings,JSON.stringify({defaultProvider:'deepseek',defaultModel:'deepseek-flash'}));
+    model.resetCache();
+    assert.equal(model.info('pi',{modelFile:settings,modelPath:'defaultModel'}).character,'deepseek');
+    const preset=require('../src/main/config').AGENT_PRESETS.find((a)=>a.id==='pi');
+    assert.ok(preset && preset.dir && preset.dir.endsWith('sessions') && preset.modelFile && preset.modelPath==='defaultModel' && preset.cli==='pi');
+    assert.ok(Array.isArray(preset.modelCatalog) && preset.modelCatalog.every((f)=>f.endsWith('.json')));
+  } finally {model.resetCache();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('transfer model catalog lists id/name/provider without leaking secrets, and ids sanitize', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
+  const slice = source.slice(source.indexOf('function readCatalogFile'), source.indexOf('function openHandoffPicker'));
+  const ctx = vm.createContext({ fs, path, agentModel: { info: () => ({ ok: true, model: 'claude-opus-5-5', label: 'Claude Opus 5.5' }) } });
+  vm.runInContext(slice, ctx);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-pi-catalog-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'models.json'), JSON.stringify({ providers: { ekti: { id: 'ekti', name: 'My Claude', apiKey: 'sk-fixture-secret', models: [{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5' }] } } }));
+    fs.writeFileSync(path.join(dir, 'models-store.json'), JSON.stringify({ deepseek: { models: [{ id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', apiKey: 'sk-fixture-2' }] } }));
+    const cat = vm.runInContext(`modelCatalogFor({ id: 'pi', modelCatalog: [${JSON.stringify(path.join(dir, 'models.json'))},${JSON.stringify(path.join(dir, 'models-store.json'))}], modelFile: ${JSON.stringify(path.join(dir, 'models.json'))}, modelPath: 'defaultModel' })`, ctx);
+    assert.equal(cat.ok, true);
+    assert.deepEqual([...cat.models.map((m) => m.id)].sort(), ['claude-opus-5-5', 'deepseek-flash']);
+    assert.equal(cat.current, 'claude-opus-5-5');
+    assert.ok(!JSON.stringify(cat).includes('sk-fixture'));
+    const re = vm.runInContext('MODEL_ID_RE', ctx);
+    assert.ok(re.test('claude-opus-5-5') && re.test('ekti/deepseek-flash:high'));
+    assert.ok(!re.test('x && calc') && !re.test('a "b"') && !re.test('-lead'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 
 test('DSH pointer reader handles multiple zstd frames without writing or reading other sessions', () => {
   const z=require('node:zlib'); if(!z.zstdCompressSync)return;
@@ -2244,6 +2542,7 @@ test('direct transfer auto-detected and session-remembered workspaces never open
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aipet-no-folder-picker-'));
   try {const project=path.join(dir,'project');fs.mkdirSync(project);const calls=[],promptMeta=[];let pickers=0;const pointer={ref:'source-1',project};
     const ctx=vm.createContext({path,fs,process,__dirname:path.join(__dirname,'../src/main'),QUOTA_ONLY:false,handoffJob:null,handoffSerial:0,petWin:{},
+      MODEL_ID_RE:/^[\w][\w.\/:@+-]{0,120}$/,
       handoffSourceKey:s=>s.character,pushHandoff:()=>{},updateTrayMenu:()=>{},escToCancel:()=>{},launchTargets:()=>[],transcriptDirs:()=>[],
       handoffApi:{KINDS:{codex:'codex'},sessionPointer:()=>({...pointer})},handoffReturn:{find:()=>null},
       state:{data:{},saveSoon:()=>{}},launcher:{supportsWorkspace:()=>true},app:{isPackaged:false},
@@ -2335,7 +2634,7 @@ test('menu opens on the invocation side when space permits and points tool rows 
 test('all tray app windows stay off the taskbar on creation, show and restore', () => {
   const {keepOffTaskbar}=require('../src/main/window-policy');const win=new EventEmitter(),values=[];let destroyed=false;
   win.isDestroyed=()=>destroyed;win.setSkipTaskbar=value=>values.push(value);keepOffTaskbar(win);win.emit('show');win.emit('restore');assert.deepEqual(values,[true,true,true]);destroyed=true;win.emit('show');assert.equal(values.length,3);
-  const main=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');assert.match(main,/browser-window-created[^\n]+keepOffTaskbar/);assert.match(main,/minHeight: 520, skipTaskbar:true/);
+  const main=fs.readFileSync(path.join(__dirname,'../src/main/main.js'),'utf8');assert.match(main,/keepOffTaskbar/);assert.match(main,/AI 桌宠 · 设置/);assert.match(main,/minHeight: 520, skipTaskbar: false/);
 });
 
 
@@ -2530,6 +2829,16 @@ test('external handoff announce gate and view', () => {
   const n = notificationFromLatest({ file: 'D:\\cache\\HANDOFF-E-001.md', at: 42 }, () => 'E-001 slice');
   assert.equal(n.title, '收到 AI 交接');
   assert.equal(n.body, 'E-001 slice');
+  const { isScratchHandoff } = require('../src/main/handoff-external');
+  const scratch = path.join(os.tmpdir(), 'aipet-scratch-root');
+  assert.equal(isScratchHandoff('D:\\x.md', () => scratch), true);
+  assert.equal(isScratchHandoff('D:\\x.md', () => 'D:\\work\\ai-pet'), false);
+  assert.equal(isScratchHandoff(path.join(os.tmpdir(), 'HANDOFF.md'), () => null), true);
+  assert.equal(isScratchHandoff(path.join(os.homedir(), '.handoff', 'cache', 'HANDOFF.md'), () => null), false);
+  const gone = path.join(__dirname, '.aipet-scratch-marker.md');
+  fs.writeFileSync(gone, `<!-- ai-pet-project:${JSON.stringify({ root: scratch })} -->\n# HANDOFF — x\n`);
+  try { assert.equal(isScratchHandoff(gone, () => null), true, '临时目录删掉之后也不该当成真交接'); }
+  finally { fs.rmSync(gone, { force: true }); }
 });
 
 test('external handoff picks host from ai-pet-handoff meta (not hard-coded cursor)', () => {
@@ -2554,7 +2863,7 @@ test('external handoff picks host from ai-pet-handoff meta (not hard-coded curso
     assert.equal(toolForExternalHandoff(file), 'codex');
     const v = viewFromLatest({ file, at: 99 }, () => 'E-HOST');
     assert.equal(v.host, 'codex');
-    assert.match(v.detail, /codex/);
+    assert.equal(v.detail, 'E-HOST');
     assert.equal(v.canMarkReturned, true);
     assert.equal(v.returned, false);
   } finally {
@@ -2563,15 +2872,16 @@ test('external handoff picks host from ai-pet-handoff meta (not hard-coded curso
 });
 
 test('writeReturnReceipt writes HANDOFF-RETURN + repo RETURNED.md only (no engagements.json)', () => {
-  const { writeReturnReceipt, metaFromHandoff, viewFromLatest } = require('../src/main/handoff-external');
+  const { writeReturnReceipt, metaFromHandoff, viewFromLatest, notificationFromLatest } = require('../src/main/handoff-external');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-return-repo-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-return-home-'));
   const teamEng = path.join(repo, '.team', 'engagements');
   fs.mkdirSync(teamEng, { recursive: true });
   const engJson = path.join(repo, '.team', 'engagements.json');
   fs.writeFileSync(engJson, JSON.stringify({ version: 1, items: [{ id: 'E-PET', state: 'out' }] }, null, 2));
   const before = fs.readFileSync(engJson, 'utf8');
   try {
-    const r = writeReturnReceipt({ engageId: 'E-PET', repoRoot: repo, host: 'codex' });
+    const r = writeReturnReceipt({ engageId: 'E-PET', repoRoot: repo, host: 'codex', home });
     assert.ok(fs.existsSync(r.handoffFile));
     assert.match(path.basename(r.handoffFile), /HANDOFF-RETURN-E-PET/);
     const body = fs.readFileSync(r.handoffFile, 'utf8');
@@ -2589,8 +2899,14 @@ test('writeReturnReceipt writes HANDOFF-RETURN + repo RETURNED.md only (no engag
     assert.equal(v.returned, true);
     assert.equal(v.canMarkReturned, false);
     assert.equal(v.heading, '外包已交回');
+    assert.equal(v.detail, 'E-PET 已交回');
+    const n = notificationFromLatest({ file: r.handoffFile, at: 1 }, () => 'return E-PET → codex');
+    assert.equal(n.title, '外包已交回');
+    assert.equal(n.body, 'E-PET 已交回');
+    assert.equal(n.host, 'codex');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 

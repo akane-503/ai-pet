@@ -8,17 +8,19 @@
 </head>
 <body>
 <aside id="nav">
-  <div class="brand">AI 桌宠<small>额度 · 角色 · 提醒</small></div>
+  <div class="brand">AI 桌宠<small id="brand-who">额度 · 角色 · 提醒</small></div>
+  <div class="nav-label">日常</div>
+  <a href="#appearance" data-tab="appearance">外观</a>
+  <a href="#notifications" data-tab="notifications">消息中心 <span id="unread" class="pill hidden"></span></a>
+  <div class="nav-label">工具</div>
   <a href="#tools" data-tab="tools">工具与环境</a>
   <a href="#providers" data-tab="providers">账号与额度</a>
-  <a href="#takeover" data-tab="takeover">接手与转接</a>
+  <div class="nav-label">可选功能</div>
   <a href="#notify" data-tab="notify">通知</a>
-  <a href="#appearance" data-tab="appearance">外观</a>
+  <a href="#takeover" data-tab="takeover">接手与转接</a>
   <a href="#activity" data-tab="activity">检测规则</a>
   <a href="#launch" data-tab="launch">启动覆盖</a>
-  <a href="#notifications" data-tab="notifications">消息中心 <span id="unread" class="pill hidden"></span></a>
-  <a href="#about" data-tab="about">关于</a>
-  <div class="nav-foot"><button id="save" class="primary">保存设置</button><div id="save-msg"></div></div>
+  <div class="nav-foot"><a href="#about" data-tab="about">关于</a><button id="save" class="primary">保存设置</button><div id="save-msg"></div></div>
 </aside>
 <main>
   <section id="tab-tools" class="tab">
@@ -105,6 +107,27 @@
       <label><input type="checkbox" data-a="showOverFullscreen"> 其他应用全屏时仍显示桌宠</label>
       <label><input type="checkbox" data-a="snapScreen"> 靠近屏幕边缘时吸附</label>
       <label><input type="checkbox" data-a="snapWindows"> 吸附到其他窗口（坐在窗口顶上、贴窗口两侧，并跟随窗口移动）</label>
+    </div>
+    <div class="card">
+      <h3>交接操作样式</h3>
+      <p class="hint">转接气泡里「复制指令 / 取消」这些按钮的摆法。点卡片切换预览，保存后应用到桌宠。</p>
+      <div id="handoff-style-cards" class="style-cards">
+        <button type="button" data-style="classic" aria-pressed="false">
+          <span class="style-name">经典按钮</span>
+          <span class="style-demo demo-classic" aria-hidden="true"><i>复制指令</i><i>取消</i></span>
+          <span class="style-desc">现在的错落按钮列</span>
+        </button>
+        <button type="button" data-style="orbit" aria-pressed="false">
+          <span class="style-name">细弧沿边</span>
+          <span class="style-demo demo-orbit" aria-hidden="true"><svg viewBox="0 0 194 268" preserveAspectRatio="none"><path d="M45 48C114 90 131 172 111 215"/></svg><i style="left:23%;top:18%">复制</i><i style="left:57%;top:80%">取消</i></span>
+          <span class="style-desc">操作贴着上肩弧线</span>
+        </button>
+        <button type="button" data-style="edge" aria-pressed="false">
+          <span class="style-name">右侧侧签</span>
+          <span class="style-demo demo-edge" aria-hidden="true"><i>复制指令</i><i>取消</i></span>
+          <span class="style-desc">收成一列贴边小签</span>
+        </button>
+      </div>
     </div>
     <div class="card">
       <label><input type="checkbox" id="autostart"> 开机自启</label>

@@ -15,6 +15,7 @@ const AGENT_PRESETS = [
   { id: 'qoder', name: 'Qoder', process: 'Qoder IDE.exe|Qoder.exe', look: 'qwen', url: 'https://qoder.com' },
   { id: 'codebuddy', name: 'CodeBuddy', process: 'CodeBuddy.exe', look: 'kimi', url: 'https://www.codebuddy.ai' },
   { id: 'workbuddy', name: 'WorkBuddy', process: 'WorkBuddy.exe', look: 'qwen', dir: path.join(WIN_HOME, '.workbuddy', 'sessions'), url: 'https://www.workbuddy.cn' },
+  { id: 'pi', name: 'Pi', look: 'claude', dir: path.join(WIN_HOME, '.pi', 'agent', 'sessions'), modelFile: path.join(WIN_HOME, '.pi', 'agent', 'settings.json'), modelPath: 'defaultModel', modelCatalog: [path.join(WIN_HOME, '.pi', 'agent', 'models.json'), path.join(WIN_HOME, '.pi', 'agent', 'models-store.json')], cli: 'pi', url: 'https://pi.dev' },
   { id: 'yuanbao', name: '元宝', process: 'yuanbao.exe', title: '^腾讯元宝', look: 'deepseek', url: 'https://yuanbao.tencent.com' },
 ];
 
@@ -28,6 +29,7 @@ function defaultConfig() {
       deepseekSkin: 'classic',    // classic(原版胸像) | chibi(Q版胸像) | svg
       customImages: {},           // characterId -> 本机图片路径（覆盖内置立绘）
       bubbleOn: true,
+      handoffActionStyle: 'classic', // classic | orbit | edge
       bubbleSeconds: 5,
       headpatStyle: 'rub',        // rub(原版揉头节奏) | gentle(轻拍差分)
       sound: 'off',               // off | duck | fx1
@@ -114,6 +116,7 @@ class JsonStore {
       try { raw = JSON.parse(fs.readFileSync(this.file + '.bak', 'utf8')); } catch (_) { raw = null; }
     }
     this.data = deepMerge(this.defaults(), raw || {});
+    normalizeHandoffStyle(this.data);
     // providers 数组：补齐默认项缺失字段，并把新版本新增的内置服务商补进老配置
     if (Array.isArray(this.data.providers)) {
       const defs = this.defaults().providers;
@@ -129,6 +132,7 @@ class JsonStore {
     return this.data;
   }
   save() {
+    normalizeHandoffStyle(this.data);
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = this.file + '.tmp';
@@ -141,6 +145,12 @@ class JsonStore {
   saveSoon() {
     clearTimeout(this._timer);
     this._timer = setTimeout(() => this.save(), 400);
+  }
+}
+
+function normalizeHandoffStyle(config) {
+  if (config?.appearance && !['classic', 'orbit', 'edge'].includes(config.appearance.handoffActionStyle)) {
+    config.appearance.handoffActionStyle = 'classic';
   }
 }
 

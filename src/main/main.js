@@ -39,7 +39,11 @@ if (dataDirArg) app.setPath('userData', path.resolve(dataDirArg.slice('--data-di
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 if (IS_WIN) app.setAppUserModelId(app.isPackaged ? EDITION.id : process.execPath);
-app.on('browser-window-created',(_event,win)=>require('./window-policy').keepOffTaskbar(win));
+app.on('browser-window-created', (_event, win) => {
+  // 设置是普通窗口：要能最小化到任务栏。桌宠、面板、转接菜单仍不占任务栏。
+  if (win.getTitle() === 'AI 桌宠 · 设置') return;
+  require('./window-policy').keepOffTaskbar(win);
+});
 
 const userData = app.getPath('userData');
 const config = new JsonStore(path.join(userData, 'config.json'), defaultConfig);
@@ -157,7 +161,7 @@ function characterImages() {
   return out;
 }
 
-let petWin = null, settingsWin = null, panelWin = null, tray = null, moduleTreeWin = null;
+let petWin = null, settingsWin = null, panelWin = null, tray = null, agentMapWin = null, moduleTreeWin = null;
 let petReady = false, pendingNotices = [];
 let boxReceived = false;
 let petBox = { x: 0, y: 0, w: 200, h: 240 };
@@ -303,12 +307,14 @@ function checkWindows() {
       foreground = { character: mascot, at: Date.now(), tool: fgc, label };
       lastAgentWin = { hwnd: fg.hwnd, title: fg.title, tool: fgc, character: fgc, mascot };
       recent = { character: mascot, at: Date.now(), reason: 'focus', label };
+    } else if (fg && fg.hwnd !== ownHwnd() && activity.isBrowserWindow(fg)) {
+      foreground = { character: null, at: Date.now(), browsing: true };
     } else foreground = { character: null, at: 0 };
     const wins = winsnap.titledWindows();
     const agentWins = new Map();
     for (const w of wins) { const c = activity.routeForWindow(w, config.data.activity, config.data.providers, agents()); if (c && !w.iconic) agentWins.set(w.hwnd, mascotOf(c)); }
-    if (knownAgentWins) {
-      // 同一个终端/浏览器也可能切工具。Z 序中最前的新工具优先。
+    if (knownAgentWins && !foreground.character && !foreground.browsing) {
+      // 前台已经是某个工具或浏览器时，后台窗口的标题变化不能把角色抢走。
       for (const [h, c] of agentWins) if (knownAgentWins.get(h) !== c) { recent = { character: c, at: Date.now(), reason: 'launch' }; log('agent window appeared ->', c); break; }
     }
     knownAgentWins = agentWins;
@@ -347,7 +353,7 @@ function panelPlace(W, H) {
   if (y + H > wa.y + wa.height) y = Math.max(wa.y, wa.y + wa.height - H);
   return { x: Math.round(x), y: Math.round(y) };
 }
-let panelShown = false, panelFallback = null;
+let panelShown = false, panelFallback = null, panelTween = null;
 function togglePanel() {
   if(transferDialog && !transferDialog.win.isDestroyed())transferDialog.win.close();
   if (panelWin && !panelWin.isDestroyed()) { closePanel(); return; }
@@ -366,16 +372,55 @@ function togglePanel() {
   panelWin.on('closed', () => { panelWin = null; sendPet('cmd', { name: 'menu-open', on: false }); });
   sendPet('cmd', { name: 'menu-open', on: true });
 }
-function showPanelAt(h) {
+function showPanelAt(h, w) {
   if (!panelWin || panelWin.isDestroyed()) return;
   clearTimeout(panelFallback);
   const b = panelWin.getBounds();
-  h = Math.max(80, Math.min(h, screen.getDisplayMatching(petWin.getBounds()).workArea.height - 12));
-  const { x, y } = panelPlace(b.width, h);
-  panelWin.setBounds({ x, y, width: b.width, height: Math.round(h) });
-  if (!panelShown) { panelShown = true; panelWin.show(); panelWin.moveTop(); panelWin.focus(); }
+  const wa = screen.getDisplayMatching(petWin.getBounds()).workArea;
+  h = Math.max(80, Math.min(h, wa.height - 12));
+  const width = Math.max(296, Math.min(Number(w) || b.width, wa.width - 12));
+  let x, y;
+  if (width > b.width) {
+    // 项目管理拉开：左缘固定、向右扩宽，贴屏幕右缘再往回收
+    x = Math.max(wa.x, Math.min(b.x, wa.x + wa.width - width));
+    y = b.y;
+  } else {
+    ({ x, y } = panelPlace(width, h));
+  }
+  const to = { x, y, width, height: Math.round(h) };
+  if (!panelShown || width === b.width) {
+    panelWin.setBounds(to);
+    if (!panelShown) { panelShown = true; panelWin.show(); panelWin.moveTop(); panelWin.focus(); }
+    return;
+  }
+  // 拉开/收起做尺寸补间，窗口不瞬间跳变
+  if (panelTween) clearInterval(panelTween);
+  const from = { ...b }, steps = 9;
+  let i = 0;
+  panelTween = setInterval(() => {
+    i++;
+    if (!panelWin || panelWin.isDestroyed()) { clearInterval(panelTween); panelTween = null; return; }
+    const t = i / steps, e = 1 - Math.pow(1 - t, 3);
+    panelWin.setBounds({
+      x: Math.round(from.x + (to.x - from.x) * e), y: Math.round(from.y + (to.y - from.y) * e),
+      width: Math.round(from.width + (to.width - from.width) * e), height: Math.round(from.height + (to.height - from.height) * e),
+    });
+    if (i >= steps) { clearInterval(panelTween); panelTween = null; }
+  }, 16);
 }
-function closePanel() { if (panelWin && !panelWin.isDestroyed()) panelWin.close(); panelWin = null; }
+function closePanel() { if (panelTween) { clearInterval(panelTween); panelTween = null; } if (panelWin && !panelWin.isDestroyed()) panelWin.close(); panelWin = null; }
+function openProjectPanel() {
+  if (!petWin || petWin.isDestroyed()) return;
+  if (!petWin.isVisible()) setPetVisible(true);
+  if (panelWin && !panelWin.isDestroyed()) {
+    sendPanel('project:open');
+    panelWin.show();
+    panelWin.focus();
+    return;
+  }
+  togglePanel();
+  if (panelWin && !panelWin.isDestroyed()) panelWin.webContents.once('did-finish-load', () => sendPanel('project:open'));
+}
 
 // ---------- 通知 ----------
 function pushNotification(ev, providerId) {
@@ -606,7 +651,7 @@ function ensureOnScreen() {
 function openSettings(tab) {
   if (settingsWin && !settingsWin.isDestroyed()) { if(settingsWin.isMinimized())settingsWin.restore();settingsWin.show(); settingsWin.focus(); if (tab) sendSettings('goto', tab); return; }
   settingsWin = new BrowserWindow({
-    width: 960, height: 700, minWidth: 760, minHeight: 520, skipTaskbar:true, title: 'AI 桌宠 · 设置', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f6f7fb',
+    width: 960, height: 700, minWidth: 760, minHeight: 520, skipTaskbar: false, minimizable: true, title: 'AI 桌宠 · 设置', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f6f7fb',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, spellcheck: false },
   });
   settingsWin.setMenu(null);
@@ -614,6 +659,19 @@ function openSettings(tab) {
   settingsWin.on('closed', () => { settingsWin = null; });
   settingsWin.webContents.on('before-input-event', (e, input) => { if (input.key === 'F12' && input.type === 'keyDown') settingsWin.webContents.toggleDevTools(); });
   settingsWin.webContents.once('did-finish-load', () => pushData());
+}
+
+// Agent 架构思维导图：独立窗口，从桌宠右键/托盘菜单进入
+function openAgentMap() {
+  if (agentMapWin && !agentMapWin.isDestroyed()) { if (agentMapWin.isMinimized()) agentMapWin.restore(); agentMapWin.show(); agentMapWin.focus(); return; }
+  agentMapWin = new BrowserWindow({
+    width: 1180, height: 800, minWidth: 780, minHeight: 560, skipTaskbar: false, minimizable: true, title: 'AI 桌宠 · Agent 架构', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f2f5fa',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, spellcheck: false },
+  });
+  agentMapWin.setMenu(null);
+  agentMapWin.loadFile(path.join(ROOT, 'src', 'renderer', 'agentmap.html'));
+  agentMapWin.on('closed', () => { agentMapWin = null; });
+  agentMapWin.webContents.on('before-input-event', (e, input) => { if (input.key === 'F12' && input.type === 'keyDown') agentMapWin.webContents.toggleDevTools(); });
 }
 
 function openModuleTree() {
@@ -808,6 +866,7 @@ function buildMenuTemplate() {
     { label: '吸附到窗口', type: 'checkbox', checked: !!ap.snapWindows, enabled: winsnap.available(), click: (m) => setAppearance({ snapWindows: m.checked }) },
     { label: '开机自启', type: 'checkbox', checked: !!config.data.autostart, click: (m) => setAutostart(m.checked) },
     { type: 'separator' },
+    { label: '项目进度…', click: () => openProjectPanel() },
     { label: '模块进度…', click: () => openModuleTree() },
     { label: '⚙️ 设置…', click: () => openSettings('tools') },
     { label: petWin && petWin.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => { if (petWin) setPetVisible(!petWin.isVisible()); } },
@@ -818,20 +877,25 @@ function buildMenuTemplate() {
 function petMenuTemplate() {
   const all = buildMenuTemplate();
   if (QUOTA_ONLY) return all;
-  const job = handoffJob || lastHandoffJob;
+  const job = handoffJob;
+  const parked = !job && lastHandoffJob && lastHandoffJob.canMarkReturned && !lastHandoffJob.returned && !lastHandoffJob.closed ? lastHandoffJob : null;
   return [
     ...(job && job.text ? [
       { label: '📋 复制交接指令', click: () => handoffAction({ action: 'copy', id: job.id }) },
       ...(job.canMarkReturned ? [{ label: '✅ 已交回', click: () => handoffAction({ action: 'mark-returned', id: job.id }) }] : []),
       { label: '收起交接提示', click: () => handoffAction({ action: 'close', id: job.id }) },
-      ...(handoffJob ? [{ label: '⏹ 取消交接', click: () => handoffAction({ action: 'cancel', id: job.id }) }] : []),
+      { label: '⏹ 取消交接', click: () => handoffAction({ action: 'cancel', id: job.id }) },
       { type: 'separator' },
     ] : []),
-    ...all.slice(1, 3), // 打开其他 / 交接（「打开当前工具」双击桌宠就够了）
+    ...(parked ? [
+      { label: '✅ 已交回', click: () => handoffAction({ action: 'mark-returned', id: parked.id }) },
+      { type: 'separator' },
+    ] : []),
+    ...(all[1] ? [all[1]] : []),
+    ...(typeof currentHandoffSource === 'function' && currentHandoffSource() && all[2] ? [all[2]] : []),
     { type: 'separator' },
     ...all.slice(7, 9), // 摸头 / 消息
-    { label: '模块进度…', click: () => openModuleTree() },
-    ...all.filter((m) => m.label === '⚙️ 设置…'),
+    ...all.filter((m) => m.label === '项目进度…' || m.label === '模块进度…' || m.label === '⚙️ 设置…'),
     { label: '隐藏桌宠（托盘图标可唤回）', click: () => setPetVisible(false) },
   ];
 }
@@ -929,6 +993,16 @@ function probeSources() {
   return rows;
 }
 function currentHandoffSource() { return lastAgentWin && winsnap.titledWindows().some((w) => w.hwnd === lastAgentWin.hwnd) ? lastAgentWin : null; }
+function workspaceForSource(source, session) {
+  const kind=source&&handoffApi.KINDS[handoffSourceKey(source)];
+  if(!kind)return null;
+  const pointer=handoffApi.sessionPointer(kind,transcriptDirs(kind),source.title,session);
+  if(!pointer)return null;
+  const key=handoffApi.referenceKey(pointer.ref),remembered=(state.data.handoffWorkspaces||[]).find(r=>(r.key||handoffApi.referenceKey(r.ref))===key);
+  let project=pointer.project;
+  if(!project&&remembered){try{if(fs.statSync(remembered.project).isDirectory())project=remembered.project;}catch(_){}}
+  return {kind,pointer,project:project||''};
+}
 let transferDialog = null;
 const TRANSFER_MAX_H = 440;
 function placeTransferMenu(height) {
@@ -943,6 +1017,35 @@ function placeTransferMenu(height) {
   if(Object.keys(next).some(k=>next[k]!==prev[k]))dialog.win.setBounds(next);
   if(!dialog.win.isVisible()){dialog.shownAt=Date.now();dialog.win.show();dialog.win.focus();}
 }
+// 多模型 harness（pi 等）的可选模型目录：只取 id/name/provider，绝不外带 apiKey 等其他字段。
+function readCatalogFile(file, bag) {
+  try {
+    if (fs.statSync(file).size > 4 * 1024 * 1024) return;
+    const visit = (obj, provider) => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj.models)) {
+        const name = typeof obj.name === 'string' && obj.name ? obj.name : provider;
+        for (const m of obj.models) {
+          if (m && typeof m.id === 'string' && m.id && !bag.has(m.id)) bag.set(m.id, { id: m.id, name: (typeof m.name === 'string' && m.name) || m.id, provider: name });
+        }
+      }
+      for (const v of Object.values(obj)) if (v && typeof v === 'object') visit(v, typeof obj.id === 'string' ? obj.id : provider);
+    };
+    visit(JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')), '');
+  } catch (_) { /* 目录文件缺失或损坏就跳过这一份 */ }
+}
+function modelCatalogFor(agent) {
+  if (!agent || !Array.isArray(agent.modelCatalog) || !agent.modelCatalog.length) return { ok: false, models: [], current: '' };
+  const bag = new Map();
+  for (const f of agent.modelCatalog) readCatalogFile(f, bag);
+  const current = agentModel.info(agent.id, agent);
+  const models = [...bag.values()];
+  if (current && current.ok && current.model && !bag.has(current.model)) models.unshift({ id: current.model, name: current.label || current.model, provider: '' });
+  return { ok: models.length > 0, models, current: current && current.ok ? current.model : '' };
+}
+// 转接启动模型只允许干净的 id，拼命令行前先过正则，防注入。
+const MODEL_ID_RE = /^[\w][\w.\/:@+-]{0,120}$/;
+
 function openHandoffPicker(source) {
   if (QUOTA_ONLY) return;
   if (handoffJob) { lastSaid=''; pushHandoff(); return; }
@@ -977,9 +1080,14 @@ ipcMain.handle('transfer:data', e=>{
     file:fromLatest?fromLatest.file:'',fileDir:fromLatest?path.basename(path.dirname(fromLatest.file)):'',
     colors:(allCharacters().find(c=>c.id===currentCharacter)||CHARACTERS[0]).colors,
     // 来源工具不进目标列表：转到同一个工具只会把指令发回它自己的旧对话
-    tools:dialog.targets.map((t,index)=>({t,index})).filter(x=>x.t.id!==sourceKey).map(({t,index})=>({index,label:t.spec.label,
-      kindLabel:({'app':'桌面工具','store':'桌面工具','cli':'本机终端','wsl-cli':'WSL 终端','url':'浏览器入口'})[t.spec.kind]||t.spec.kind,
-      workspace:launcher.supportsWorkspace(t.spec)})),
+    tools:dialog.targets.map((t,index)=>({t,index})).filter(x=>x.t.id!==sourceKey).map(({t,index})=>{
+      const cat=modelCatalogFor(agents().find(a=>a.id===t.id));
+      return {index,label:t.spec.label,
+        kindLabel:({'app':'桌面工具','store':'桌面工具','cli':'本机终端','wsl-cli':'WSL 终端','url':'浏览器入口'})[t.spec.kind]||t.spec.kind,
+        workspace:launcher.supportsWorkspace(t.spec),
+        models:cat.ok?cat.models:[],
+        currentModel:cat.current};
+    }),
     sessions:(cache?.list||[]).map(s=>({file:s.file,name:s.name,project:s.project||'',fresh:s.fresh||''}))};
 });
 ipcMain.handle('transfer:workspace',(e,request)=>{
@@ -987,13 +1095,9 @@ ipcMain.handle('transfer:workspace',(e,request)=>{
   dialog.workspaceProbe=null;
   const pin=request?.session?dialog.allowedSessions.get(request.session):null;
   if(request?.session&&!pin)return {project:'',delegated:true};
-  const kind=dialog.source&&handoffApi.KINDS[handoffSourceKey(dialog.source)];
-  if(!kind)return {project:'',delegated:true};
-  const pointer=handoffApi.sessionPointer(kind,transcriptDirs(kind),dialog.source.title,pin?.file);
-  if(!pointer)return {project:'',delegated:true};
-  const key=handoffApi.referenceKey(pointer.ref),remembered=(state.data.handoffWorkspaces||[]).find(r=>(r.key||handoffApi.referenceKey(r.ref))===key);
-  let project=pointer.project;
-  if(!project&&remembered){try{if(fs.statSync(remembered.project).isDirectory())project=remembered.project;}catch(_){}}
+  const workspace=workspaceForSource(dialog.source,pin?.file);
+  if(!workspace)return {project:'',delegated:true};
+  const {kind,pointer,project}=workspace;
   dialog.workspaceProbe={selection:request?.session||null,pin:{kind,file:pointer.ref,name:pointer.title||pin?.name||''}};
   return {project:project||'',delegated:!project,name:pointer.title||pin?.name||''};
 });
@@ -1009,7 +1113,11 @@ ipcMain.handle('transfer:start',(e,request)=>{
   if(request.mode==='direct'&&!readable)return {ok:false,error:'当前来源没有可读会话，请先使用来源工具'};
   if(request.mode==='summary'&&(!readable||!quipsKey()))return {ok:false,error:'DS 总结需要可读来源和 DeepSeek Key'};
   if(request.mode==='file'&&!handoff.latest())return {ok:false,error:'没有可用的交接文件'};
-  setImmediate(()=>runHandoff(target.id,target.spec,request.mode==='file'?null:dialog.source,pin,{direct:request.mode==='direct',summaryOnly:request.mode==='summary'}));
+  const agent=agents().find(a=>a.id===target.id);
+  const cat=modelCatalogFor(agent);
+  // 启动模型必须在目标自己的目录里，且过干净 id 正则，才允许拼进命令行
+  const model=request.model&&cat.ok&&cat.models.some((m)=>m.id===request.model)&&MODEL_ID_RE.test(request.model)?request.model:'';
+  setImmediate(()=>runHandoff(target.id,target.spec,request.mode==='file'?null:dialog.source,pin,{direct:request.mode==='direct',summaryOnly:request.mode==='summary',model}));
   return {ok:true};
 });
 ipcMain.on('transfer:close',e=>{const dialog=transferAccess(e);if(dialog)dialog.win.close();});
@@ -1044,7 +1152,8 @@ function pushHandoff(j = handoffJob) {
   const headings = j.direct ? ['认来源会话', '定位工作区', '正在打开工具', j.cli ? '正在发送指令' : '正在复制指令'] : [j.viaApi ? '读对话记录' : '请原 AI 写交接', j.viaApi ? 'DeepSeek 整理中' : '等 AI 整理好', '正在打开工具', j.cli ? '正在发送指令' : j.fillingDraft ? '正在填入指令' : '正在复制指令'];
   // 还没走成任何一步、又已经知道退回了老流程时，先说清楚原因
   const beforeAnyOk = !j.steps.some((x) => x.s === 'ok');
-  const heading = j.received ? '新 AI 已接手' : j.done ? (j.cancelled ? '交接已停止' : failed ? '还差一步' : j.returning ? (j.cli ? '原会话继续中' : j.prefilled ? '在 Codex 确认发送' : '已请求返回原会话') : j.cli ? '接手指令已发送' : j.prefilled ? `在 ${j.prefillLabel || 'Codex'} 确认发送` : '到新对话粘贴') : (j.fallback && beforeAnyOk ? '退回原流程' : headings[Math.max(0, i)]);
+  const where = j.prefillLabel || j.target || '目标工具';
+  const heading = j.received ? '新 AI 已接手' : j.done ? (j.cancelled ? '交接已停止' : failed ? '还差一步' : j.returning ? (j.cli ? '原会话继续中' : j.prefilled ? `在 ${where} 确认发送` : '已请求返回原会话') : j.cli ? '接手指令已发送' : j.prefilled ? `在 ${where} 确认发送` : '到新对话粘贴') : (j.fallback && beforeAnyOk ? '退回原流程' : headings[Math.max(0, i)]);
   const shortProject = j.project && ([...j.project].length > 12 ? [...j.project].slice(0, 12).join('') + '…' : j.project);
   // 旧版被替换掉多少行、读的是哪个对话：都写进气泡，别让唯一真相源被悄悄重写
   const replaced = j.replaced ? `\n旧版 ${j.replaced} 行已备份` : '';
@@ -1161,6 +1270,10 @@ function handoffAction({ action, id } = {}) {
 
 /** 外部写入 ~/.handoff/latest.txt：只在 sponsor-gate / deliverable-ready / returned 通知，同 engage+kind 只响一次 */
 function announceExternalHandoff(latest) {
+  if (handoffExternal.isScratchHandoff(latest && latest.file, (file) => handoff.workspaceOf(file))) {
+    log('external handoff skip scratch', latest && latest.file);
+    return;
+  }
   const decision = handoffExternal.decideAnnounce(latest, externalHandoffMemory);
   externalHandoffMemory = handoffExternal.rememberAnnounce(externalHandoffMemory, decision, latest);
   if (decision.channel === 'skip') return;
@@ -1296,12 +1409,12 @@ function watchReceived(job, targetId, spec) {
 }
 
 // 一键交接：让来源 AI 写 HANDOFF → 等 latest.txt 更新 → 在项目目录打开目标工具 → 粘贴接手指令
-async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnly = false } = {}) {
+async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnly = false, model = '' } = {}) {
   if (QUOTA_ONLY) return;
   if (handoffJob) { lastSaid = ''; pushHandoff(); return; }
   // 只有终端能可靠地自动粘贴；桌面应用唤出后焦点常不在输入框，打开好工作区后由用户粘贴
   const cli = /cli$/.test(spec.kind);
-  const job = handoffJob = { id: ++handoffSerial, target: spec.label, cli, direct, workspace: launcher.supportsWorkspace(spec), cancelled: false, done: false, sent: false, text: src && !direct ? handoff.writePrompt(handoffSourceKey(src)) : '', note: '',
+  const job = handoffJob = { id: ++handoffSerial, target: spec.label, cli, direct, model: MODEL_ID_RE.test(model) ? model : '', workspace: launcher.supportsWorkspace(spec), cancelled: false, done: false, sent: false, text: src && !direct ? handoff.writePrompt(handoffSourceKey(src)) : '', note: '',
     title: direct ? `直接接手 → ${spec.label}` : summaryOnly ? `DS 总结后接手 → ${spec.label}` : `交接 → ${spec.label}`,
     steps: direct
       ? [{ t: '认来源会话', s: 'wait' }, { t: '定位工作区', s: 'wait' }, { t: cli ? '启动目标终端' : '打开目标工具', s: 'wait' }, { t: cli ? '发送接手指令' : '指令放进剪贴板', s: 'wait' }]
@@ -1470,13 +1583,13 @@ async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnl
       let already = null;
       if (!returnSession && spec.kind === 'app') { try { already = launcher.isRunning(spec) ? spec.label : null; } catch (_) { already = null; } }
       if (already) job.already = already;
-      let r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, prompt: job.text, session: returnSession, handoff: true });
+      let r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, prompt: job.text, session: returnSession, handoff: true, model: job.model });
       if (!r.ok && returnSession && !job.cancelled) {
         job.returning = false;
         if (!direct) job.text = handoff.takeoverPrompt(job.handoffPath, { project: path.basename(ws), tool: targetId });
         await clipboard.writeText(job.text);
         if (job.cancelled) return;
-        r = await launchFor(targetId, spec, { cwd: ws, prompt: job.text, handoff: true });
+        r = await launchFor(targetId, spec, { cwd: ws, prompt: job.text, handoff: true, model: job.model });
       }
       if (job.cancelled) return;
       if (!r.ok) { jobStep(job, 2, 'fail', r.message || '工具没打开，指令在剪贴板'); return; }
@@ -1484,14 +1597,21 @@ async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnl
       if (desktopDraft.isDsh(spec)) {
         job.fillingDraft = true;
         jobStep(job, 2, 'ok'); job.steps[3].t = '填入接手指令'; jobStep(job, 3, 'run');
-        const window = await waitFor(() => winsnap.findWindow('.', 'DSH Desktop.exe'), 12000, job, 300);
+        const window = await waitFor(() => winsnap.findWindow('.', path.basename(spec.target || 'DSH Desktop.exe')), 12000, job, 300);
         if (job.cancelled) return;
         if (window && winsnap.bringToFront(window.hwnd)) {
           job.draftController = new AbortController();
-          const draft = await desktopDraft.prefillDsh({ hwnd: window.hwnd, workspace: ws, prompt: job.text, signal: job.draftController.signal });
+          const draft = await desktopDraft.prefillDsh({ hwnd: window.hwnd, workspace: ws, prompt: job.text, signal: job.draftController.signal, spec });
           if (job.cancelled) return;
           job.prefilled = draft.prefilled; job.prefillLabel = 'DSH'; job.draftPresent = draft.code === 'draft-present';
           log('handoff DSH draft', draft.code, 'workspaceVerified', draft.workspaceVerified === true);
+          if (!draft.workspaceVerified) {
+            jobStep(job, 3, 'fail', draft.code === 'workspace-unregistered' ? 'DSH 工作区未注册或名称重复，请在 DSH 添加本项目后重试；指令已保留在剪贴板' : '未确认 DSH 已切到目标工作区，请先手动选择本项目；指令已保留在剪贴板');
+            return;
+          }
+        } else {
+          jobStep(job, 3, 'fail', '未找到可操作的 DSH 窗口，指令已保留在剪贴板');
+          return;
         }
       }
       jobStep(job, 2, 'ok'); jobStep(job, 3, 'ok', 'Ctrl+V 粘贴接手指令');
@@ -1499,9 +1619,10 @@ async function runHandoff(targetId, spec, src, pin, { direct = false, summaryOnl
     }
     // 等新开终端里的 Claude 起来（标题变成 Claude Code）
     const existing = new Set(winsnap.titledWindows().map((w) => w.hwnd));
-    const routed = (w) => { const c = activity.routeForWindow(w, config.data.activity, config.data.providers, agents()); return c && (charOf(c) || c) === targetId; };
+    // 自定义 agent（pi 等）以 agent id 为准：charOf('pi') 返回它的模型角色，拿去比对目标 id 永远不相等
+    const routed = (w) => { const c = activity.routeForWindow(w, config.data.activity, config.data.providers, agents()); if (!c) return false; return agents().some((a) => a.id === targetId) ? c === targetId : (charOf(c) || c) === targetId; };
     const findTarget = () => winsnap.titledWindows().find((w) => routed(w) && w.hwnd !== (src && src.hwnd) && w.hwnd !== ownHwnd() && !existing.has(w.hwnd));
-    const r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, session: returnSession, handoff: true });
+    const r = await launchFor(targetId, spec, { cwd: direct&&!ws?null:ws, session: returnSession, handoff: true, model: job.model });
     if (job.cancelled) return;
     if (!r.ok) { jobStep(job, 2, 'fail', r.message || '终端没打开，指令在剪贴板'); return; }
     const win = await waitFor(findTarget, 60000, job);
@@ -1633,10 +1754,23 @@ registerTransferIpc();
 ipcMain.on('handoff:action', (e, action) => { if (petWin && e.sender === petWin.webContents) handoffAction(action); });
 ipcMain.on('panel:toggle', () => togglePanel());
 ipcMain.on('panel:close', () => closePanel());
-ipcMain.on('panel:size', (e, { h }) => { if (!panelWin || panelWin.isDestroyed()) return; const b = panelWin.getBounds(); if (panelShown && Math.abs(b.height - h) < 2) return; showPanelAt(h); });
+ipcMain.on('panel:size', (e, { h, w }) => { if (!panelWin || panelWin.isDestroyed()) return; const b = panelWin.getBounds(); if (panelShown && Math.abs(b.height - h) < 2 && (Number(w) || b.width) === b.width) return; showPanelAt(h, w); });
 ipcMain.on('panel:ready', () => pushData());
+ipcMain.handle('project:workspace', (e) => {
+  const fromPanel = panelWin && !panelWin.isDestroyed() && e.sender === panelWin.webContents;
+  const fromSettings = settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents;
+  const fromAgentMap = agentMapWin && !agentMapWin.isDestroyed() && e.sender === agentMapWin.webContents;
+  if (!fromPanel && !fromSettings && !fromAgentMap) throw new Error('仅项目面板、设置页或 Agent 架构窗口可定位工作区');
+  if (QUOTA_ONLY) return { project: '' };
+  try {
+    return { project: workspaceForSource(currentHandoffSource())?.project || '' };
+  } catch {
+    return { project: '' };
+  }
+});
 ipcMain.on('cmd:pet', (e, c) => sendPet('cmd', c));
 ipcMain.on('open-settings', (e, tab) => openSettings(tab));
+ipcMain.on('open-agent-map', () => openAgentMap());
 ipcMain.on('launch', (e, id) => (QUOTA_ONLY ? openSettings('providers') : id ? launchFor(id) : launchCurrent()));
 ipcMain.handle('agents:presets', async () => { await launcher.discover(AGENT_PRESETS); return AGENT_PRESETS.map((a) => ({ ...a, installed: launcher.agentSpec(a).kind === 'app' })); });
 ipcMain.handle('launch:defaults', async () => { await launcher.discover(agents()); return { ...launcher.defaults(), ...agentLaunch() }; });
@@ -1772,7 +1906,22 @@ app.whenReady().then(() => {
   if (!externalHandoffTimer) externalHandoffTimer = setInterval(pollExternalHandoff, 2000);
   // 首次：只把本机装了的预设 agent 加进来
   launcher.discover([...agents(), ...AGENT_PRESETS]).then(() => {
-    if (config.data.agents) return;
+    if (config.data.agents) {
+      // 老配置补新预设：目录存在的 dir 型 agent（如 Pi）缺失就整条补进来；
+      // 已有条目缺后续版本新增的模型字段（modelFile/modelPath/modelCatalog）也按 preset 合并，不动用户改过的部分
+      const MODEL_KEYS = ['modelFile', 'modelPath', 'modelCatalog'];
+      let changed = false;
+      for (const preset of AGENT_PRESETS) {
+        if (!preset.dir || !fs.existsSync(preset.dir)) continue;
+        const existing = config.data.agents.find((a) => a && a.id === preset.id);
+        if (!existing) { config.data.agents.push({ ...preset }); changed = true; continue; }
+        for (const key of MODEL_KEYS) {
+          if (preset[key] !== undefined && JSON.stringify(existing[key]) !== JSON.stringify(preset[key])) { existing[key] = preset[key]; changed = true; }
+        }
+      }
+      if (changed) { config.save(); updateTrayMenu(); pushData(); }
+      return;
+    }
     config.data.agents = AGENT_PRESETS.filter((a) => launcher.agentSpec(a).kind === 'app' || (a.dir && fs.existsSync(a.dir)));
     config.save(); updateTrayMenu(); pushData();
   });

@@ -44,7 +44,7 @@ function claudeWinSpec() {
 }
 // VS Code 系编辑器：把文件夹当参数就能打开工作区（已开着也会转给现有实例）
 // DSH / ZCode 使用显式开关；WorkBuddy 与编辑器接受目录参数。
-const FOLDER_APPS = /^(code|cursor|windsurf|kiro|trae( cn)?|qoder( ide)?|codebuddy|workbuddy|zcode|dsh desktop)\.exe$/i;
+const FOLDER_APPS = /^(code|cursor|windsurf|kiro|trae( cn)?|qoder( ide)?|codebuddy|workbuddy|zcode|dsh (?:desktop|next))\.exe$/i;
 
 // 每个角色的默认启动方式；用户可在设置里覆盖（config.launch[characterId]）
 function defaults() {
@@ -103,13 +103,14 @@ function discover(agents = [], { force = false } = {}) {
   })));
 }
 
-// 自定义 agent 的默认启动：显式 target > 搜到的 exe > 常见安装目录里的同名 exe > 网址
+// 自定义 agent 的默认启动：显式 target > 搜到的 exe > 常见安装目录里的同名 exe > PATH 里的 CLI > 网址
 function agentSpec(a) {
   const exes = exeNames(a);
   const dirs = [path.join(HOME, 'AppData', 'Local', 'Programs'), process.env.ProgramFiles || 'C:\\Program Files'];
   const target = a.target || exes.map((exe) => found[exe.toLowerCase()]).find(exists) || [found[labelKey(a)]].find(exists) || (a.paths || []).find(exists)
     || exes.flatMap((exe) => dirs.map((d) => path.join(d, exe.replace(/\.exe$/i, ''), exe))).find(exists);
   if (target) return { kind: 'app', label: a.name, target, process: path.basename(target), match: a.title || '', fallbackUrl: a.url || null };
+  if (a.cli && findCommand(a.cli)) return { kind: 'cli', label: a.name + ' CLI', command: a.cli };
   return a.url ? { kind: 'url', label: (a.web || a.name) + ' 网页', target: a.url, webFallback: true } : null;
 }
 
@@ -200,7 +201,7 @@ function workspaceDirectory(value) {
 }
 
 // 返回 { ok, message }
-async function launch(characterId, userLaunch, { cwd = '', prompt = '', session = null } = {}) {
+async function launch(characterId, userLaunch, { cwd = '', prompt = '', session = null, model = '' } = {}) {
   const spec = resolve(characterId, userLaunch);
   if (!spec) return { ok: false, message: '这个角色还没配置启动方式' };
   const resume = session && require('./handoff-return').UUID.test(session.id || '') && session.tool === characterId;
@@ -226,8 +227,9 @@ async function launch(characterId, userLaunch, { cwd = '', prompt = '', session 
         if (!exists(spec.target)) { if (spec.fallbackUrl) { await shell.openExternal(spec.fallbackUrl); return { ok: true, message: '本地没装，打开网页版' }; } return { ok: false, message: '找不到 ' + spec.target }; }
         const exe = path.basename(spec.target).toLowerCase();
         const workspaceArg = exe === 'dsh desktop.exe' ? '--dsh-desktop-workspace=' + ws : exe === 'zcode.exe' ? '--open-workspace=' + ws : ws;
-        await run(spec.target, ws ? [...(spec.args || []), workspaceArg] : (spec.args || []), { cwd: path.dirname(spec.target) });
-        return { ok: true, message: '正在打开 ' + spec.label, workspaceRequested: !!ws };
+        const workspaceArgs = ws && exe !== 'dsh next.exe' ? [...(spec.args || []), workspaceArg] : (spec.args || []);
+        await run(spec.target, workspaceArgs, { cwd: path.dirname(spec.target) });
+        return { ok: true, message: '正在打开 ' + spec.label, workspaceRequested: !!ws && exe !== 'dsh next.exe' };
       case 'store':
         if (resume && characterId === 'codex' && CODEX_STORE_ID.test(spec.target || '')) {
           await shell.openExternal('codex://threads/' + encodeURIComponent(session.id) + (prompt ? '?prompt=' + encodeURIComponent(prompt) : ''));
@@ -259,7 +261,9 @@ async function launch(characterId, userLaunch, { cwd = '', prompt = '', session 
       }
       case 'cli': {
         const wt = path.join(HOME, 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'wt.exe');
-        const line = require('./handoff-return').cliResume(characterId, spec, session) || spec.command || '';
+        // 转接时可带启动模型（id 已在上游按白名单校验，这里再过一次正则防注入）
+        const picked = /^[\w][\w.\/:@+-]{0,120}$/.test(String(model || '')) ? String(model) : '';
+        const line = (require('./handoff-return').cliResume(characterId, spec, session) || spec.command || '') + (picked ? ' --model ' + picked : '');
         if (exists(wt)) await run(wt, ['-w', 'new', ...(ws ? ['-d', ws] : []), 'cmd.exe', '/k', line]);
         else await run('cmd.exe', ['/c', 'start', '""', ...(ws ? ['/d', ws] : []), 'cmd.exe', '/k', line]);
         return { ok: true, message: '正在打开 ' + spec.label };

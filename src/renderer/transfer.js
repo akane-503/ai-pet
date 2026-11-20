@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  let flow=window.TransferFlow.initial(),data=null,busy=false,polls=0,workspaceInfo=null,probing=false,probeSequence=0;
+  let flow=window.TransferFlow.initial(),data=null,busy=false,polls=0,workspaceInfo=null,probing=false,probeSequence=0,pickModel='';
   const act=action=>{flow=window.TransferFlow.change(flow,action);$('#status').textContent='';$('#more').open=false;if(action.type==='session'){workspaceInfo=null;probing=false;probeSequence++;}render();if(action.type==='session')locateWorkspace();};
   function render() {
     if(!data)return;
@@ -22,7 +22,13 @@
     $('#workspace').title=project||'无需手动选目录；接手 AI 会先从来源记录定位项目，再开始工作';
     const targetScroll=$('#target-list').scrollTop,sessionScroll=$('#session-list').scrollTop;
     const query=$('#search').value.toLowerCase();
-    $('#target-list').innerHTML=data.tools.filter(t=>t.label.toLowerCase().includes(query)).map(t=>`<button class="choice" data-target="${t.index}"><strong>${esc(t.label)}</strong><small>${esc(t.kindLabel)} · ${t.workspace?'带目录':'仅指令'}</small></button>`).join('')||`<p>${data.tools.length?'没有匹配的工具。':'没有可转接的其他工具。'}</p>`;
+    $('#target-list').innerHTML=data.tools.filter(t=>t.label.toLowerCase().includes(query)).map(t=>`<button class="choice" data-target="${t.index}"><strong>${esc(t.label)}</strong><small>${esc(t.kindLabel)} · ${t.workspace?'带目录':'仅指令'}${t.models&&t.models.length?` · ${t.models.length} 个模型`:''}</small></button>`).join('')||`<p>${data.tools.length?'没有匹配的工具。':'没有可转接的其他工具。'}</p>`;
+    // 多模型 harness（pi 等）：接手方式页给一个启动模型下拉，默认它当前在用的模型
+    const withModels=flow.view==='modes'?data.tools.find(t=>t.index===flow.target&&t.models&&t.models.length):null;
+    $('#model-row').hidden=!withModels;
+    if(withModels){if(!pickModel||!withModels.models.some(m=>m.id===pickModel))pickModel=withModels.currentModel||withModels.models[0].id;
+      $('#model-select').innerHTML=withModels.models.map(m=>`<option value="${esc(m.id)}" ${m.id===pickModel?'selected':''}>${esc(m.name)}${m.provider?' · '+esc(m.provider):''}</option>`).join('');}
+    else pickModel='';
     const sessionQuery=$('#session-search').value.toLowerCase();
     const sessions=data.sessions.filter(s=>!sessionQuery||`${s.name} ${s.project}`.toLowerCase().includes(sessionQuery));
     $('#session-list').innerHTML=sessions.map(s=>`<button class="choice ${session?.file===s.file?'selected':''}" data-session="${esc(s.file)}"><strong>${esc(s.name)}</strong><small>${esc([s.project,s.fresh].filter(Boolean).join(' / '))}</small></button>`).join('')||(data.loading?'<p>正在读取来源会话…</p>':data.sessions.length?'<p>没有匹配的会话。</p>':'<p>没有读到会话。可返回使用自动识别，或重新打开此窗口检查。</p>');
@@ -70,7 +76,7 @@
   }
   async function start(mode) {
     if(busy||probing)return;busy=true;render();$('#status').textContent='正在启动接手…';
-    try {const r=await window.pet.invoke('transfer:start',{target:flow.target,mode,session:flow.session?.file||null});if(!r.ok)throw Error(r.error);window.pet.send('transfer:close');}
+    try {const r=await window.pet.invoke('transfer:start',{target:flow.target,mode,session:flow.session?.file||null,model:pickModel});if(!r.ok)throw Error(r.error);window.pet.send('transfer:close');}
     catch(e){busy=false;render();$('#status').textContent=e.message;}
   }
   $('#target-list').addEventListener('click',e=>{const b=e.target.closest('[data-target]');if(b){act({type:'target',target:Number(b.dataset.target)});$('#more').open=false;$('#start-direct').focus();}});
@@ -83,6 +89,7 @@
   $('#start-direct').addEventListener('click',()=>start('direct'));
   $('#start-summary').addEventListener('click',()=>start('summary'));
   $('#start-file').addEventListener('click',()=>start('file'));
+  $('#model-select').addEventListener('change',e=>{pickModel=e.target.value;});
   $('#close').addEventListener('click',()=>window.pet.send('transfer:close'));
   window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(flow.view==='targets')window.pet.send('transfer:close');else act({type:'back'});}});
   load();
