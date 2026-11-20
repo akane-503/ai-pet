@@ -88,7 +88,8 @@ test('project panel resolves worktrees to their PM control checkout and identifi
   `);
   process.env.TEAM_PM_CLI = cli;
   const status = await readProjectStatus(tree);
-  assert.equal(status.root, fs.realpathSync(root));
+  // GitHub 的临时目录会给出 8.3 短名，realpath 的两种实现不一定返回同一串。
+  assert.equal(fs.realpathSync.native(status.root), fs.realpathSync.native(root));
   assert.equal(status.currentRoot.replace(/\\/g, '/'), tree.replace(/\\/g, '/'));
   assert.equal(status.worktrees.length, 2);
   assert.equal(status.worktrees.find((item) => item.current).branch, 'feature');
