@@ -157,7 +157,7 @@ function characterImages() {
   return out;
 }
 
-let petWin = null, settingsWin = null, panelWin = null, tray = null;
+let petWin = null, settingsWin = null, panelWin = null, tray = null, moduleTreeWin = null;
 let petReady = false, pendingNotices = [];
 let boxReceived = false;
 let petBox = { x: 0, y: 0, w: 200, h: 240 };
@@ -616,6 +616,17 @@ function openSettings(tab) {
   settingsWin.webContents.once('did-finish-load', () => pushData());
 }
 
+function openModuleTree() {
+  if (moduleTreeWin && !moduleTreeWin.isDestroyed()) { if (moduleTreeWin.isMinimized()) moduleTreeWin.restore(); moduleTreeWin.show(); moduleTreeWin.focus(); return; }
+  moduleTreeWin = new BrowserWindow({
+    width: 760, height: 640, minWidth: 480, minHeight: 360, skipTaskbar: true, title: 'AI 桌宠 · 模块进度', icon: path.join(ASSETS, 'app.ico'), autoHideMenuBar: true, backgroundColor: '#f2f5fa',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, spellcheck: false },
+  });
+  moduleTreeWin.setMenu(null);
+  moduleTreeWin.loadFile(path.join(ROOT, 'src', 'renderer', 'moduletree.html'));
+  moduleTreeWin.on('closed', () => { moduleTreeWin = null; });
+}
+
 // ---------- 吸附 ----------
 function physToDip(r) {
   const a = screen.screenToDipPoint({ x: r.left, y: r.top });
@@ -797,6 +808,7 @@ function buildMenuTemplate() {
     { label: '吸附到窗口', type: 'checkbox', checked: !!ap.snapWindows, enabled: winsnap.available(), click: (m) => setAppearance({ snapWindows: m.checked }) },
     { label: '开机自启', type: 'checkbox', checked: !!config.data.autostart, click: (m) => setAutostart(m.checked) },
     { type: 'separator' },
+    { label: '模块进度…', click: () => openModuleTree() },
     { label: '⚙️ 设置…', click: () => openSettings('tools') },
     { label: petWin && petWin.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => { if (petWin) setPetVisible(!petWin.isVisible()); } },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
@@ -818,6 +830,7 @@ function petMenuTemplate() {
     ...all.slice(1, 3), // 打开其他 / 交接（「打开当前工具」双击桌宠就够了）
     { type: 'separator' },
     ...all.slice(7, 9), // 摸头 / 消息
+    { label: '模块进度…', click: () => openModuleTree() },
     ...all.filter((m) => m.label === '⚙️ 设置…'),
     { label: '隐藏桌宠（托盘图标可唤回）', click: () => setPetVisible(false) },
   ];
@@ -1733,6 +1746,11 @@ ipcMain.handle('news:check', async (e, cfg) => {
 });
 ipcMain.handle('pick-file', async () => { const r = await dialog.showOpenDialog({ properties: ['openFile', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('pick-directory', async () => { const r = await dialog.showOpenDialog({ properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
+ipcMain.handle('module-tree:read', async (e, directory) => {
+  if (!moduleTreeWin || moduleTreeWin.isDestroyed() || e.sender !== moduleTreeWin.webContents) throw new Error('仅模块进度窗口可读取');
+  const { readModuleProgress } = require('./module-status');
+  return readModuleProgress(directory);
+});
 ipcMain.handle('pick-dir', async () => { const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('activity:now', () => { checkActivity(); return lastActivity; });
 

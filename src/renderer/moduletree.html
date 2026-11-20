@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>AI 桌宠 · 模块进度</title>
+<style>
+:root { --line: #203170; --text: #536ba9; --hint: #7b8cb3; --page: #f2f5fa; --surface: #fff; --border: #d5dced; --muted: #5c6b8a; }
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif; font-size: 13px; color: #24304a; background: var(--page); }
+header { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+header b { color: var(--line); white-space: nowrap; }
+input { flex: 1; height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; font: inherit; }
+button { height: 32px; border: 1px solid var(--border); background: white; border-radius: 8px; padding: 0 12px; cursor: pointer; font: inherit; }
+main { flex: 1; overflow: auto; padding: 14px 16px; }
+.hint { color: var(--muted); margin: 0; }
+.mod-tree { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
+.mod-root, .mod-card, .mod-parent { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.mod-root { padding: 12px 14px; border-color: var(--line); }
+.mod-goal { display: block; font-size: 16px; }
+.mod-label { font-size: 11px; color: var(--muted); }
+.mod-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mod-parent { padding: 8px 10px; }
+.mod-parent-name { display: block; margin-bottom: 6px; }
+.mod-summary { list-style: none; display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 10px 12px; }
+.mod-summary::-webkit-details-marker { display: none; }
+.mod-dot { width: 10px; height: 10px; border-radius: 50%; background: #b7c0d4; flex: none; }
+.st-doing .mod-dot { background: var(--line); }
+.st-review .mod-dot { background: #c5922a; }
+.st-gap .mod-dot { background: #c0392b; }
+.st-done .mod-dot { background: #1f8a4c; }
+.mod-body { padding: 0 12px 10px 30px; color: var(--muted); font-size: 12px; }
+.mod-body p { margin: 3px 0; overflow-wrap: anywhere; }
+.mod-empty { margin: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <b>模块进度</b>
+  <input id="root" type="text" placeholder="项目目录的完整路径">
+  <button id="pick">选择目录</button>
+  <button id="read">读取</button>
+</header>
+<main>
+  <div id="view"><p class="hint">根是项目目标，下面是模块。颜色是状态，点开看到交付物路径和一行缺口。</p></div>
+</main>
+<script src="module-tree-view.js"></script>
+<script src="moduletree.js"></script>
+</body>
+</html>
