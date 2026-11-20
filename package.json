@@ -12,7 +12,7 @@
   "scripts": {
     "start": "electron .",
     "pack": "node scripts/pack.js",
-    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js scripts/test-skills.js",
+    "test": "node --test scripts/test-behavior.js scripts/test-data.js scripts/test-release.js scripts/test-geometry.js scripts/test-skills.js scripts/test-module-tree.js",
     "dist": "electron-builder --win nsis",
     "postdist": "node scripts/installer-latest.js",
     "dist:editions": "node scripts/build-editions.js"
