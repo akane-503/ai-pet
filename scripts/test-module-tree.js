@@ -29,6 +29,26 @@ test('module tree is the project goal, then modules, with one gap line', () => {
   assert.ok(!text.includes('long report'));
 });
 
+test('module tree reads team status words as pending, doing, review, gap, and done', () => {
+  const tree = buildModuleTree({
+    charter: { goal: '看见模块' },
+    modules: [
+      { id: 'q', title: '排队', status: 'queued', deliverable: 'docs/a.md' },
+      { id: 'w', title: '在做', status: 'in-progress', deliverable: 'src/w.js' },
+      { id: 'g', title: '缺口', status: 'in-progress', deliverable: 'src/g.js', gap: '差一行' },
+      { id: 'r', title: '待看', status: 'for-review', deliverable: 'src/r.js' },
+      { id: 'd', title: '好了', status: 'done', deliverable: 'src/d.js' },
+      { id: 'x', title: '取消', status: 'canceled', deliverable: 'src/x.js' },
+    ],
+  });
+  assert.equal(tree.root.title, '看见模块');
+  assert.deepEqual(tree.root.children.map((item) => item.status), ['pending', 'doing', 'gap', 'review', 'done']);
+  assert.deepEqual(tree.root.children.map((item) => item.label), ['未开始', '进行中', '有缺口', '待验收', '完成']);
+  assert.equal(tree.root.children[2].gap, '差一行');
+  assert.equal(tree.root.children[2].deliverable, 'src/g.js');
+  assert.equal(JSON.stringify(tree).includes('取消'), false);
+});
+
 test('module progress keeps modules and drops worker reports', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-modtree-'));
   const root = path.join(folder, 'pet');

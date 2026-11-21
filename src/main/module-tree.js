@@ -15,23 +15,42 @@ function oneLine(value, max) {
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
 }
 
-function statusOf(value) {
-  const status = String(value || '').trim().toLowerCase();
-  return STATUSES.includes(status) ? status : 'pending';
+// team status --json 用 queued|in-progress|for-review|done|canceled。
+// 树上只显示 pending|doing|review|gap|done。in-progress 再带一行缺口，就是有缺口。
+const FROM_TEAM = Object.freeze({
+  pending: 'pending',
+  queued: 'pending',
+  doing: 'doing',
+  'in-progress': 'doing',
+  review: 'review',
+  'for-review': 'review',
+  gap: 'gap',
+  done: 'done',
+  canceled: 'canceled',
+  cancelled: 'canceled',
+});
+
+function statusOf(value, gap) {
+  const raw = String(value || '').trim().toLowerCase();
+  const status = Object.prototype.hasOwnProperty.call(FROM_TEAM, raw) ? FROM_TEAM[raw] : 'pending';
+  // 控制面把「验收出了缺口」写成 in-progress，并带一行 gap。树上这就是有缺口。
+  if (raw === 'in-progress' && String(gap || '').replace(/\s+/g, ' ').trim()) return 'gap';
+  return status;
 }
 
 function moduleNode(raw, index) {
   const title = oneLine(raw && (raw.title || raw.name || raw.id), 80) || `模块 ${index + 1}`;
-  const status = statusOf(raw && raw.status);
+  const gap = oneLine(raw && (raw.gap || raw.gapLine), 160);
+  const status = statusOf(raw && raw.status, raw && (raw.gap || raw.gapLine));
   return {
     kind: 'module',
     id: oneLine(raw && raw.id, 80) || title,
     title,
     status,
-    label: LABELS[status],
+    label: LABELS[status] || '',
     parentGoal: oneLine(raw && (raw.parentGoal || raw.goalId || raw.goal), 120),
     deliverable: oneLine(raw && (raw.deliverable || raw.deliverablePath || raw.path), 300),
-    gap: oneLine(raw && (raw.gap || raw.gapLine), 160),
+    gap,
   };
 }
 
@@ -50,7 +69,8 @@ function buildModuleTree(status) {
   ) || '项目目标';
   const modules = (Array.isArray(source.modules) ? source.modules : [])
     .filter((item) => item && typeof item === 'object')
-    .map(moduleNode);
+    .map(moduleNode)
+    .filter((mod) => mod.status !== 'canceled');
   const direct = [];
   const groups = [];
   const grouped = new Map();

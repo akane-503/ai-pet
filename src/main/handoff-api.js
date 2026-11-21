@@ -122,6 +122,34 @@ function zcodeDb(dir) {
   for (const c of [path.join(dir, 'cli', 'db', 'db.sqlite'), path.join(dir, 'db', 'db.sqlite')]) { try { if (fs.existsSync(c)) return c; } catch (_) { /* */ } }
   return null;
 }
+// 重写后的桌面把「还在列表里的对话」放在 v2/tasks-index.sqlite。
+// session.time_deleted 不会跟着归档走，只扫 session 会把已归档对话当成还开着。
+function zcodeTaskRows(dir) {
+  const file = path.join(dir, 'v2', 'tasks-index.sqlite');
+  if (!fs.existsSync(file)) return null;
+  const { DatabaseSync } = require('node:sqlite');
+  let sqlite; try { sqlite = new DatabaseSync(file, { readOnly: true }); } catch (_) { return null; }
+  try {
+    try {
+      return sqlite.prepare('select task_id as id, title, workspace_path, root_path, updated_at from tasks where coalesce(deleted, 0) = 0 and coalesce(archived, 0) = 0 order by updated_at desc').all();
+    } catch (_) {
+      return sqlite.prepare('select task_id as id, title, workspace_path, updated_at from tasks where coalesce(deleted, 0) = 0 and coalesce(archived, 0) = 0 order by updated_at desc').all();
+    }
+  } catch (_) { return null; }
+  finally { try { sqlite.close(); } catch (_) { /* */ } }
+}
+function zcodeTaskDir(task, sessionDir) {
+  for (const c of [task && task.root_path, task && task.workspace_path, sessionDir]) {
+    const p = String(c || '').trim();
+    if (p && path.isAbsolute(p) && zcodeProject(p) !== '默认工作区') return p;
+  }
+  return String((task && task.workspace_path) || sessionDir || '');
+}
+function zcodePidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
+}
 function zcodeOpen(file) {
   const { DatabaseSync } = require('node:sqlite');
   const s = String(file).slice(ZCODE.length);
@@ -133,28 +161,66 @@ function zcodeSessions(dirs, n) {
   const out = [];
   for (const d of dirs) {
     const db = zcodeDb(d); if (!db) continue;
+    const tasks = zcodeTaskRows(d);
     let sqlite; try { sqlite = new DatabaseSync(db, { readOnly: true }); } catch (_) { continue; }
     try {
-      for (const r of sqlite.prepare("select id, title, directory, time_updated from session where time_deleted is null and (task_type is null or task_type = 'interactive') order by time_updated desc limit ?").all(n)) {
-        out.push({ p: `${ZCODE}${db}#${r.id}`, m: r.time_updated, size: 0, name: r.title || '', dir: r.directory || '' });
+      if (tasks) {
+        const session = sqlite.prepare('select title, directory, time_updated, time_deleted, task_type from session where id = ?');
+        for (const t of tasks) {
+          let s = null; try { s = session.get(t.id); } catch (_) { s = null; }
+          if (s && s.time_deleted) continue;
+          if (s && s.task_type && s.task_type !== 'interactive') continue;
+          out.push({ p: `${ZCODE}${db}#${t.id}`, m: Number(t.updated_at || (s && s.time_updated) || 0), size: 0, name: t.title || (s && s.title) || '', dir: zcodeTaskDir(t, s && s.directory) });
+        }
+      } else {
+        for (const r of sqlite.prepare("select id, title, directory, time_updated from session where time_deleted is null and (task_type is null or task_type = 'interactive') order by time_updated desc limit ?").all(n)) {
+          out.push({ p: `${ZCODE}${db}#${r.id}`, m: r.time_updated, size: 0, name: r.title || '', dir: r.directory || '' });
+        }
       }
     } catch (_) { /* 老版本没这些列 */ } finally { sqlite.close(); }
   }
   return out.sort((a, b) => b.m - a.m).slice(0, n);
 }
 
-// ZCode 没有「当前打开的会话」这种字段，但 input_history 的最后一条就是用户最近敲过字的会话，
-// 比 session.time_updated（后台压缩也会刷新）更接近「我正在看的那个」
+// 旧界面没有「当前打开的会话」，只能看 input_history 最后一条。
+// 重写后：session_runtime_presence 记下宿主进程还握着的会话；session_input 的 sendText 是 v4 发送账本。
+// 后台压缩仍会刷新 session.time_updated，所以没有活进程时才退回「最后一次真发出去的字」。
 function zcodeActiveId(dirs) {
   const { DatabaseSync } = require('node:sqlite');
   for (const d of dirs || []) {
     const db = zcodeDb(d); if (!db) continue;
+    const tasks = zcodeTaskRows(d);
+    const allow = tasks ? new Set(tasks.map((t) => t.id)) : null;
+    const visible = (id) => !!id && (!allow || allow.has(id));
     let sqlite; try { sqlite = new DatabaseSync(db, { readOnly: true }); } catch (_) { continue; }
     try {
-      const r = sqlite.prepare('select session_id from input_history order by time_created desc limit 1').get();
-      if (r && r.session_id) return r.session_id;
-    } catch (_) { /* 表不存在就算了 */ } finally { sqlite.close(); }
+      const open = zcodePresenceId(sqlite, visible) || zcodeLedgerId(sqlite, visible);
+      if (open) return open;
+    } catch (_) { /* 老版本没有这些表 */ } finally { sqlite.close(); }
   }
+  return '';
+}
+function zcodePresenceId(sqlite, visible) {
+  let rows; try { rows = sqlite.prepare('select session_id, process_id from session_runtime_presence').all(); } catch (_) { return ''; }
+  let best = '', at = -1;
+  for (const r of rows) {
+    if (!visible(r.session_id) || !zcodePidAlive(r.process_id)) continue;
+    let updated = 0;
+    try { updated = Number((sqlite.prepare('select time_updated from session where id = ?').get(r.session_id) || {}).time_updated || 0); } catch (_) { updated = 0; }
+    if (updated >= at) { at = updated; best = r.session_id; }
+  }
+  return best;
+}
+function zcodeLedgerId(sqlite, visible) {
+  try {
+    const hit = sqlite.prepare("select session_id from session_input where kind = 'sendText' and status = 'promoted' order by time_updated desc limit 30").all().find((r) => visible(r.session_id));
+    if (hit) return hit.session_id;
+  } catch (_) { /* 0.15.2 之前没有 session_input */ }
+  try {
+    const hit = sqlite.prepare('select session_id, kind from input_history order by time_created desc limit 30').all()
+      .find((r) => visible(r.session_id) && (r.kind == null || r.kind === 'prompt' || r.kind === 'user'));
+    if (hit) return hit.session_id;
+  } catch (_) { /* 表不存在就算了 */ }
   return '';
 }
 function zcodeText(file) {
@@ -346,6 +412,8 @@ function watchCursorSent(dbPath, want) {
 // 用户常不开剪贴板而手敲 `$takeover <自己起的任务名>`：正文对不上原指令时，
 // 只要新消息以任意接手指令形式开头也算发出；聊天里「提到」$takeover 不算（必须开头）
 const ZCODE_TAKEOVER_CMD = /^\s*(?:[$/]takeover\b|use\s+takeover\s+skill\b|用\s*takeover\s*技能)/i;
+// 重写后 role=user 里大量是隐藏的 system_reminder / background_notification，不是人打的字。
+const ZCODE_HUMAN = "json_valid(m.data) and json_extract(m.data, '$.role') = 'user' and coalesce(json_extract(m.data, '$.synthetic'), 0) = 0 and (json_extract(m.data, '$.semantics.uiVisibility') is null or json_extract(m.data, '$.semantics.uiVisibility') = 'visible') and (json_extract(m.data, '$.semantics.kind') is null or json_extract(m.data, '$.semantics.kind') = 'user_prompt')";
 function watchZcodeSent(dirs, want) {
   const { DatabaseSync } = require('node:sqlite');
   let baseline = null;
@@ -355,10 +423,10 @@ function watchZcodeSent(dirs, want) {
       const dbFile = zcodeDb(d); if (!dbFile) continue;
       let sqlite; try { sqlite = new DatabaseSync(dbFile, { readOnly: true }); } catch (_) { continue; }
       try {
-        const row = sqlite.prepare("select coalesce(max(m.time_created), 0) t from message m, session s where m.session_id = s.id and s.time_deleted is null and json_valid(m.data) and json_extract(m.data, '$.role') = 'user'").get();
+        const row = sqlite.prepare(`select coalesce(max(m.time_created), 0) t from message m, session s where m.session_id = s.id and s.time_deleted is null and ${ZCODE_HUMAN}`).get();
         if (baseline === null) { baseline = row.t; continue; }
         if (row.t <= baseline) continue;
-        const fresh = sqlite.prepare("select p.data d from part p, message m, session s where p.message_id = m.id and p.session_id = s.id and m.session_id = s.id and s.time_deleted is null and json_valid(m.data) and json_extract(m.data, '$.role') = 'user' and m.time_created > ? order by m.time_created desc limit 20").all(baseline);
+        const fresh = sqlite.prepare(`select p.data d from part p, message m, session s where p.message_id = m.id and p.session_id = s.id and m.session_id = s.id and s.time_deleted is null and ${ZCODE_HUMAN} and m.time_created > ? order by m.time_created desc limit 20`).all(baseline);
         baseline = row.t;
         for (const r of fresh) {
           let o; try { o = JSON.parse(r.d); } catch (_) { continue; }
