@@ -1944,6 +1944,56 @@ test('ZCode defaults to the session you last typed in, and marks it in the picke
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('ZCode uses the live task index, and ignores archived chats and hidden user rows', () => {
+  const h = require('../src/main/handoff-api');
+  const { DatabaseSync } = require('node:sqlite');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlive-'));
+  try {
+    const dbPath = path.join(dir, 'cli', 'db', 'db.sqlite'); fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const taskPath = path.join(dir, 'v2', 'tasks-index.sqlite'); fs.mkdirSync(path.dirname(taskPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec('create table session (id text, title text, directory text, time_created integer, time_updated integer, task_type text, time_deleted integer)');
+    db.exec('create table message (id text, session_id text, time_created integer, data text)');
+    db.exec('create table part (id text, message_id text, session_id text, time_created integer, sequence integer, data text)');
+    db.exec('create table input_history (id text, project_id text, session_id text, text text, kind text, time_created integer, attachments text)');
+    db.exec('create table session_input (id text, session_id text, kind text, status text, time_updated integer)');
+    db.exec('create table session_runtime_presence (session_id text, owner_id text, process_id integer)');
+    const now = Date.now();
+    const add = (id, title, updated) => db.prepare('insert into session values (?,?,?,?,?,?,?)').run(id, title, 'D:\\proj', updated, updated, 'interactive', null);
+    add('sess_archived', '已归档', now);
+    add('sess_typed', '最后敲过字', now - 60000);
+    add('sess_open', '眼前这个', now - 300000);
+    db.prepare('insert into input_history values (?,?,?,?,?,?,?)').run('i1', 'proj', 'sess_archived', '归档里的字', 'prompt', now, null);
+    db.prepare('insert into input_history values (?,?,?,?,?,?,?)').run('i2', 'proj', 'sess_typed', '另一处的字', 'prompt', now - 60000, null);
+    db.prepare('insert into session_input values (?,?,?,?,?)').run('s1', 'sess_typed', 'sendText', 'promoted', now - 50000);
+    db.prepare('insert into session_runtime_presence values (?,?,?)').run('sess_open', `${process.pid}:test`, process.pid);
+    db.prepare('insert into message values (?,?,?,?)').run('m0', 'sess_open', now - 400000, JSON.stringify({ role: 'user' }));
+    db.prepare('insert into part values (?,?,?,?,?,?)').run('p0', 'm0', 'sess_open', now - 400000, 0, JSON.stringify({ type: 'text', text: '原来的话' }));
+    db.close();
+    const tasks = new DatabaseSync(taskPath);
+    tasks.exec('create table tasks (task_id text, title text, workspace_path text, root_path text, updated_at integer, archived integer, deleted integer)');
+    const task = tasks.prepare('insert into tasks values (?,?,?,?,?,?,?)');
+    task.run('sess_archived', '已归档', 'D:\\old', 'D:\\old', now, 1, 0);
+    task.run('sess_typed', '最后敲过字', 'D:\\other', 'D:\\other', now - 60000, 0, 0);
+    task.run('sess_open', '眼前这个', 'D:\\proj', 'D:\\proj', now - 300000, 0, 0);
+    tasks.close();
+    const picked = h.newestTranscript('zcode', [dir]);
+    assert.match(picked, /#sess_open$/, '活着的宿主进程握着的会话才是当前对话');
+    const list = h.recentSessions('zcode', [dir], 5);
+    assert.equal(list.some((s) => s.name === '已归档'), false, '归档对话不进列表');
+    assert.equal(list.find((s) => s.current).name, '眼前这个');
+    const poll = h.watchSent('zcode', [dir], '$takeover 打开模块树');
+    const live = new DatabaseSync(dbPath);
+    live.prepare('insert into message values (?,?,?,?)').run('m-hidden', 'sess_open', now + 1000, JSON.stringify({ role: 'user', synthetic: 1, semantics: { uiVisibility: 'hidden', kind: 'background_notification' } }));
+    live.prepare('insert into part values (?,?,?,?,?,?)').run('p-hidden', 'm-hidden', 'sess_open', now + 1000, 0, JSON.stringify({ type: 'text', text: '$takeover 打开模块树' }));
+    assert.equal(poll(), false, '隐藏的背景通知不是用户发出去的');
+    live.prepare('insert into message values (?,?,?,?)').run('m-user', 'sess_open', now + 2000, JSON.stringify({ role: 'user', semantics: { uiVisibility: 'visible', kind: 'user_prompt' } }));
+    live.prepare('insert into part values (?,?,?,?,?,?)').run('p-user', 'm-user', 'sess_open', now + 2000, 0, JSON.stringify({ type: 'text', text: '$takeover 打开模块树' }));
+    assert.equal(poll(), true);
+    live.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('pet right-click drops the redundant launch item: double-click already opens the tool', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
   const ctx = vm.createContext({ QUOTA_ONLY: false,
