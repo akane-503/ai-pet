@@ -1388,12 +1388,54 @@ test('takeover prompt is just the skill call plus a task label, never a path', (
   const skill = fs.readFileSync(path.join(__dirname, '../skills/takeover/SKILL.md'), 'utf8');
   assert.match(skill, /只吸收.*新增/);
   assert.match(skill, /去重/);
+  assert.match(skill, /不要改走 `--from`/);
+  assert.match(skill, /40–80 行摘要只在换工具/);
+  const handoffSkill = fs.readFileSync(path.join(__dirname, '../skills/handoff/SKILL.md'), 'utf8');
+  assert.match(handoffSkill, /这份摘要只用于换工具/);
+  assert.match(handoffSkill, /不要写成 `--from`/);
   // 旧路径形式和无技能兜底仍然支持相对路径。
   assert.equal(shortPath('D:\\01_Projects\\Active\\ai-pet\\HANDOFF.md', 'D:\\01_Projects\\Active\\ai-pet'), 'HANDOFF.md');
   assert.equal(shortPath('D:\\p\\doc\\HANDOFF.md', 'D:\\p'), 'doc\\HANDOFF.md');
   assert.equal(shortPath('C:\\elsewhere\\HANDOFF.md', 'D:\\p'), 'C:\\elsewhere\\HANDOFF.md');
   assert.equal(shortPath('HANDOFF.md', 'D:\\p'), 'HANDOFF.md');
   assert.equal(shortPath('D:\\p\\HANDOFF.md', ''), 'D:\\p\\HANDOFF.md');
+});
+
+test('router handoff stays a one-line takeover and does not send --from', () => {
+  const { routerTakeoverPrompt } = require('../src/main/handoff');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-router-home-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipet-router-handoff-'));
+  try {
+    fs.mkdirSync(path.join(home, '.zcode', 'skills', 'takeover'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.zcode', 'skills', 'takeover', 'SKILL.md'), '# takeover');
+    const file = path.join(dir, 'HANDOFF-淘宝选型.md');
+    fs.writeFileSync(file, [
+      '# HANDOFF — 淘宝选型',
+      '<!-- ai-pet-handoff:' + JSON.stringify({ host: 'zcode', engageId: 'T-1', takeover: '$takeover 淘宝选型' }) + ' -->',
+      '',
+      '## 当前任务',
+      '一行卡，不是会话尾部。',
+    ].join('\n'));
+    assert.equal(routerTakeoverPrompt(file, { tool: 'zcode', home, from: 'zcode:C:/db.sqlite#sess', reader: 'C:/reader.js' }), '$takeover 淘宝选型');
+    const bad = path.join(dir, 'HANDOFF-坏指针.md');
+    fs.writeFileSync(bad, '# HANDOFF — 坏指针\n<!-- ai-pet-handoff:' + JSON.stringify({ takeover: '$takeover --from "zcode:C:/db.sqlite#sess"' }) + ' -->\n');
+    const line = routerTakeoverPrompt(bad, { tool: 'zcode', home, from: 'zcode:C:/db.sqlite#sess', reader: 'C:/session-reader.js', locateWorkspace: true });
+    assert.equal(line, '$takeover 坏指针');
+    assert.equal(line.includes('--from'), false);
+    assert.equal(line.includes('\n'), false);
+    const digest = path.join(dir, 'HANDOFF-换工具.md');
+    fs.writeFileSync(digest, '# HANDOFF — 换工具\n<!-- ai-pet-handoff:' + JSON.stringify({ takeover: '$takeover 换工具\n' + '摘要行\n'.repeat(40) }) + ' -->\n');
+    assert.equal(routerTakeoverPrompt(digest, { tool: 'zcode', home }), '$takeover 换工具');
+    const plain = path.join(dir, 'HANDOFF-没有标记.md');
+    fs.writeFileSync(plain, '# HANDOFF — 没有标记\n');
+    assert.equal(routerTakeoverPrompt(plain, { tool: 'zcode', home, from: 'zcode:C:/db.sqlite#sess' }), '$takeover 没有标记');
+    const main = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
+    assert.match(main, /routerTakeoverPrompt\(latest\.file/);
+    assert.match(main, /routerTakeoverPrompt\(job\.file/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('write prompt is just the skill command when the source tool has the handoff skill', () => {
@@ -1765,6 +1807,66 @@ test('API handoff reads ZCode sessions straight from its sqlite store', () => {
     assert.equal(l.name, '配字幕，翻译');
     assert.ok(l.minutes <= 2, '新鲜度按 session.time_updated 算');
     assert.equal(h.recentSessions('zcode', [dir], 3)[0].name, '配字幕，翻译');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ZCode digest drops UI-hidden reminders so they do not fill the 60000-character budget', () => {
+  const h = require('../src/main/handoff-api');
+  const { DatabaseSync } = require('node:sqlite');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhide-'));
+  try {
+    const dbPath = path.join(dir, 'cli', 'db', 'db.sqlite');
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec('create table session (id text, title text, directory text, time_created integer, time_updated integer, task_type text, time_deleted integer)');
+    db.exec('create table message (id text, session_id text, time_created integer, data text)');
+    db.exec('create table part (id text, message_id text, session_id text, time_created integer, sequence integer, data text)');
+    const now = 1700000000000;
+    db.prepare('insert into session values (?,?,?,?,?,?,?)').run('sess_1', '修字幕', 'D:\\proj', now, now, 'interactive', null);
+    const msg = db.prepare('insert into message values (?,?,?,?)');
+    const part = db.prepare('insert into part values (?,?,?,?,?,?)');
+    const add = (id, t, data, text, extra) => {
+      msg.run(id, 'sess_1', t, JSON.stringify(data));
+      part.run('p-' + id, id, 'sess_1', t, 0, JSON.stringify({ type: 'text', text }));
+      if (extra) part.run('t-' + id, id, 'sess_1', t, 1, JSON.stringify(extra));
+    };
+    add('early', now, { role: 'user', semantics: { uiVisibility: 'visible', kind: 'user_prompt' } }, 'EARLY_VISIBLE_CONSTRAINT 不要改配色');
+    add('ai', now + 1, { role: 'assistant', semantics: { uiVisibility: 'visible', kind: 'assistant_response' } }, 'ASSISTANT_KEEP 按这个做', { type: 'tool', tool: 'shell', state: { input: { cmd: 'git status D:/proj' } } });
+    add('wording', now + 2, { role: 'user', semantics: { uiVisibility: 'visible', kind: 'user_prompt' } }, 'KEEP_WORDING 正文里出现 system_reminder 这个词也要留着');
+    add('hidden-user', now + 3, { role: 'user', semantics: { uiVisibility: 'hidden', kind: 'user_prompt' } }, 'DROP_HIDDEN_USER 这条虽然 kind 是 user_prompt 但界面隐藏');
+    add('todo-visible', now + 4, { role: 'user', semantics: { uiVisibility: 'visible', kind: 'todo_reminder' } }, 'DROP_TODO_REMINDER 可见性写成 visible 也丢掉');
+    add('sys-visible', now + 5, { role: 'user', semantics: { uiVisibility: 'visible', kind: 'system_reminder' } }, 'DROP_SYSTEM_REMINDER 界面标了 visible 也丢掉');
+    add('bg-visible', now + 6, { role: 'user', semantics: { kind: 'background_notification' } }, 'DROP_BACKGROUND_NOTIFICATION 没写 uiVisibility 也丢掉');
+    add('hidden-ai', now + 7, { role: 'assistant', semantics: { uiVisibility: 'hidden', kind: 'assistant_response' } }, 'DROP_HIDDEN_ASSISTANT', { type: 'tool', tool: 'shell', state: { input: { cmd: 'DROP_HIDDEN_TOOL echo secret' } } });
+    const kinds = ['system_reminder', 'background_notification', 'todo_reminder'];
+    for (let i = 0; i < 24; i++) {
+      const kind = kinds[i % 3];
+      add('pad' + i, now + 10 + i, { role: 'user', semantics: { uiVisibility: 'hidden', kind } }, 'DROP_PAD_' + kind + ' ' + '隐'.repeat(4000));
+    }
+    add('fork', now + 50, { role: 'user', semantics: { uiVisibility: 'hidden', kind: 'fork_notice' } }, 'DROP_UI_HIDDEN fork notice');
+    add('late', now + 60, { role: 'user', semantics: { uiVisibility: 'visible', kind: 'user_prompt' } }, 'LATE_VISIBLE_PROMPT 继续修字幕');
+    add('legacy', now + 61, { role: 'user' }, 'LEGACY_VISIBLE 没有 semantics 的旧用户消息');
+    db.close();
+    const raw = h.readTranscript('zcode:' + dbPath + '#sess_1');
+    const parsed = h.parseTranscript(raw, 'zcode');
+    assert.deepEqual(parsed.user, [
+      'EARLY_VISIBLE_CONSTRAINT 不要改配色',
+      'KEEP_WORDING 正文里出现 system_reminder 这个词也要留着',
+      'LATE_VISIBLE_PROMPT 继续修字幕',
+      'LEGACY_VISIBLE 没有 semantics 的旧用户消息',
+    ]);
+    const digest = h.buildDigest(parsed.items);
+    assert.match(digest, /EARLY_VISIBLE_CONSTRAINT/);
+    assert.match(digest, /KEEP_WORDING/);
+    assert.match(digest, /LATE_VISIBLE_PROMPT/);
+    assert.match(digest, /LEGACY_VISIBLE/);
+    assert.match(digest, /ASSISTANT_KEEP/);
+    assert.match(digest, /git status D:\/proj/);
+    for (const marker of ['DROP_HIDDEN_USER', 'DROP_TODO_REMINDER', 'DROP_SYSTEM_REMINDER', 'DROP_BACKGROUND_NOTIFICATION', 'DROP_HIDDEN_ASSISTANT', 'DROP_HIDDEN_TOOL', 'DROP_PAD_system_reminder', 'DROP_PAD_background_notification', 'DROP_PAD_todo_reminder', 'DROP_UI_HIDDEN']) {
+      assert.equal(digest.includes(marker), false, marker);
+      assert.equal(raw.includes(marker), false, marker + ' leaked into transcript');
+    }
+    assert.ok(digest.length < 20000, 'hidden reminders must not consume the 60000-character digest');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

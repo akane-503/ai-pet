@@ -223,6 +223,16 @@ function zcodeLedgerId(sqlite, visible) {
   } catch (_) { /* 表不存在就算了 */ }
   return '';
 }
+// 界面上看不见的提醒仍是 role=user，正文会占进 6 万字符摘要预算。
+// uiVisibility=hidden，或 kind 为这三种，整条消息丢掉（含它的 tool part）。
+// 可见的 user_prompt，以及没有 semantics 的旧记录，保留。
+const ZCODE_DIGEST_DROP_KINDS = new Set(['system_reminder', 'background_notification', 'todo_reminder']);
+function zcodeHiddenFromDigest(data) {
+  const sem = data && data.semantics;
+  if (!sem || typeof sem !== 'object') return false;
+  if (sem.uiVisibility === 'hidden') return true;
+  return ZCODE_DIGEST_DROP_KINDS.has(String(sem.kind || ''));
+}
 function zcodeText(file) {
   const id = String(file).slice(String(file).lastIndexOf('#') + 1);
   const sqlite = zcodeOpen(file);
@@ -236,7 +246,9 @@ function zcodeText(file) {
       byMsg.get(p.message_id).push(d);
     }
     for (const m of sqlite.prepare('select id, data from message where session_id = ? order by time_created, rowid').all(id)) {
-      let role = 'user'; try { role = JSON.parse(m.data).role || 'user'; } catch (_) { continue; }
+      let data; try { data = JSON.parse(m.data); } catch (_) { continue; }
+      if (zcodeHiddenFromDigest(data)) continue;
+      const role = data.role || 'user';
       const content = [];
       for (const p of byMsg.get(m.id) || []) {
         if (p.type === 'text' && p.text) content.push({ type: role === 'user' ? 'input_text' : 'output_text', text: p.text });
@@ -888,6 +900,7 @@ function git(root) {
   return { head: run('rev-parse', '--short', 'HEAD'), status: run('status', '--short'), stat: run('diff', '--stat') };
 }
 
+// 40–80 行摘要只在换工具时走这里。Router 内部派 Worker 不调用 summarize，仍是一行 takeover。
 const PROMPT = `你是交接整理员。根据下面的 AI 编程对话（可能截断），写一份当前任务短摘要，供另一个 AI 配合 Git 现场继续工作。
 只依据记录，不编造；正文通常 40–80 行、1500 中文字以内。不累计历史流水账，不粘贴完整对话、工具输出或全部用户原话。
 只保留仍适用的目标、验收标准、约束、用户纠正、关键决策与否决理由。必要的用户原话只选少量关键短引文，不截断会改变含义的约束。

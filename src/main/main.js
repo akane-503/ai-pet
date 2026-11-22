@@ -1206,7 +1206,7 @@ function handoffAction({ action, id } = {}) {
     // 外部交接：复制路径 + takeover 提示，方便粘到目标工具
     if (job.external && job.file) {
       const tool = handoffExternal.toolForExternalHandoff(job.file);
-      clipboard.writeText(handoff.takeoverPrompt(job.file, { tool, home: os.homedir() }));
+      clipboard.writeText(handoff.routerTakeoverPrompt(job.file, { tool, home: os.homedir() }));
     } else clipboard.writeText(job.text);
   }
   if (action === 'mark-returned') {
@@ -1288,7 +1288,7 @@ function announceExternalHandoff(latest) {
   lastHandoffJob = {
     id: view.id,
     target: view.target,
-    text: handoff.takeoverPrompt(latest.file, { tool, home: os.homedir() }),
+    text: handoff.routerTakeoverPrompt(latest.file, { tool, home: os.homedir() }),
     file: latest.file,
     external: true,
     host: tool,
