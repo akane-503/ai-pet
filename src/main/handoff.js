@@ -61,6 +61,31 @@ function takeoverPrompt(file, meta = {}) {
   return [skillCall(meta.tool, 'takeover'), meta.incremental ? '--incremental' : '', label].filter(Boolean).join(' ');
 }
 
+// Router / PM Worker 交接只留一行。控制面写在 ai-pet-handoff.takeover 里、且不含 --from 的一行原样使用。
+// 带 --from、多行（那是换工具才写的 40–80 行摘要）、或没写时，退回技能命令 + 任务名。
+// 调用方就算传了 from / reader，这里也不送人去读会话尾部。
+function routerTakeoverPrompt(file, meta = {}) {
+  let written = String(meta.takeover || '').replace(/^\uFEFF/, '').trim();
+  if (!written && file) {
+    let fd;
+    try {
+      fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(24576);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const m = /<!--\s*ai-pet-handoff:(.+?)\s*-->/.exec(buf.toString('utf8', 0, n));
+      if (m) written = String(JSON.parse(m[1]).takeover || '').trim();
+    } catch (_) { written = ''; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+  if (written && !/[\r\n]/.test(written) && !/(?:^|\s)--from(?:\s|=|"|'|$)/.test(written)) return written;
+  const rest = { ...meta };
+  delete rest.from;
+  delete rest.reader;
+  delete rest.locateWorkspace;
+  delete rest.takeover;
+  return takeoverPrompt(file, rest);
+}
+
 // 返回 { file, at } 或 null
 function latest(marker = LATEST) {
   try {
@@ -124,4 +149,4 @@ function placeInWorkspace(file, root) {
   }
   throw new Error('交接文件重名过多，请选择其他项目目录');
 }
-module.exports = { LATEST, writePrompt, takeoverPrompt, shortPath, goalOf, latest, toWslPath, workspaceOf, placeInWorkspace };
+module.exports = { LATEST, writePrompt, takeoverPrompt, routerTakeoverPrompt, shortPath, goalOf, latest, toWslPath, workspaceOf, placeInWorkspace };
